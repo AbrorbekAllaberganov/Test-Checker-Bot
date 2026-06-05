@@ -21,12 +21,13 @@ jobs:
           message: |
             🚀 *OMR Test Bot: Deploy boshlandi!*
             
-            
             *Repo:* ${{ github.repository }}
             *Branch:* `${{ github.ref_name }}`
             *Muallif:* ${{ github.actor }}
             *Commit habari:*
             `${{ github.event.head_commit.message }}`
+            
+            *Workflow:* [Click to View](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
           format: markdown
 
       - name: Deploy via SSH
@@ -64,6 +65,8 @@ jobs:
             *Repo:* ${{ github.repository }}
             *Branch:* `${{ github.ref_name }}`
             *Commit:* `${{ github.sha }}`
+            
+            *Workflow:* [Click to View](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
           format: markdown
 
       - name: Send Telegram notification on failure
@@ -78,5 +81,6 @@ jobs:
             *Repo:* ${{ github.repository }}
             *Branch:* `${{ github.ref_name }}`
             *Commit:* `${{ github.sha }}`
-            Batafsil ma'lumotni GitHub Actions run loglaridan ko'rishingiz mumkin.
+            
+            *Workflow:* [Click to View](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
           format: markdown
