@@ -1,0 +1,11 @@
+# .gitignore
+.env
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+*.log
+/data/
+/tmp/
+*.pdf
+calibration_*.png

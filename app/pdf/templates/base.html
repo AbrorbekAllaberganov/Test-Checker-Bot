@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="uz">
+<head>
+<meta charset="utf-8">
+<style>
+  @page { size: A4 portrait; margin: 0; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    position: relative;
+    width: 210mm; height: 297mm;
+    font-family: 'DejaVu Sans', Arial, sans-serif;
+    color: #334155;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* ---- ANCHORLAR (OMR fiducial markerlari) — O'ZGARTIRMANG ---- */
+  .anchor { position: absolute; width: 10mm; height: 10mm; background: #000; }
+  .anchor.tl { top: 8mm;    left: 8mm;  }
+  .anchor.tr { top: 8mm;    right: 8mm; }
+  .anchor.br { bottom: 8mm; right: 8mm; }
+  .anchor.bl { bottom: 8mm; left: 8mm;  }
+
+  /* ---- QR ---- */
+  .qr { position: absolute; top: 9mm; right: 22mm; width: 22mm; height: 22mm; }
+  .qr-uuid { position: absolute; top: 31.5mm; right: 22mm; width: 22mm;
+             font-size: 4.5pt; text-align: center; color: #94a3b8; word-break: break-all; }
+
+  /* ---- Sarlavha ---- */
+  .title-bar {
+    position: absolute; top: 9mm; left: 22mm; right: 50mm; height: 8mm;
+    background: #1e3a8a; color: #fff; text-align: center;
+    font-size: 12pt; font-weight: bold; letter-spacing: 2px;
+    line-height: 8mm; border-radius: 1mm;
+  }
+  .bot-handle { position: absolute; top: 17.5mm; left: 22mm; font-size: 8pt;
+                font-weight: bold; color: #64748b; }
+
+  /* ---- Meta (test / guruh / o'quvchi) ---- */
+  .meta {
+    position: absolute; top: 21mm; left: 22mm; right: 50mm;
+    display: flex; justify-content: space-between;
+    background: #f8fafc; border: 0.5pt solid #cbd5e1;
+    border-radius: 1mm; padding: 2mm 3mm;
+    font-size: 7.5pt;
+  }
+  .meta-col {
+    width: 48%;
+  }
+  .meta .row {
+    margin-bottom: 0.8mm;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .meta .row:last-child {
+    margin-bottom: 0;
+  }
+  .meta .lbl { color: #1e3a8a; font-weight: bold; margin-right: 1mm; }
+
+  /* ---- To'ldirish namunasi ---- */
+  .sample {
+    position: absolute; top: 32.5mm; left: 22mm; right: 50mm;
+    background: #eff6ff; border: 0.5pt solid #bfdbfe;
+    border-radius: 1mm; padding: 1.2mm 2.5mm;
+    font-size: 6pt; color: #1e3a8a;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .sample-title { font-weight: bold; }
+  .sample-shapes { font-weight: bold; }
+  .sample-note { font-style: italic; color: #475569; }
+
+  /* ---- Blok sarlavhalari ---- */
+  .block-label {
+    position: absolute; font-size: 8pt; font-weight: bold; color: #1e3a8a;
+    border-bottom: 0.5pt solid #1e3a8a; padding-bottom: 0.5mm; width: 40mm;
+    text-align: center;
+  }
+
+  /* ---- Savol nomeri ---- */
+  .qnum {
+    position: absolute; font-size: 6.5pt; color: #475569; text-align: right;
+    width: 6mm;
+  }
+
+  /* ---- Doiralar (OMR o'qiydigan) ----
+     Harf rangi JUDA OCH bo'lsin: fill_ratio ga ta'sir qilmasligi uchun.
+     Chiziq ingichka. */
+  .bubble {
+    position: absolute;
+    border: 0.8pt solid #1e3a8a;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 5pt; color: #cbd5e1;  /* deyarli ko'rinmas harf */
+  }
+
+  /* ---- Pastki imzo qismi ---- */
+  .footer {
+    position: absolute; bottom: 22mm; left: 22mm; right: 8mm;
+    font-size: 7pt; color: #64748b; border-top: 0.5pt solid #e2e8f0; padding-top: 2mm;
+  }
+</style>
+</head>
+<body>
+  <!-- Anchorlar -->
+  <div class="anchor tl"></div>
+  <div class="anchor tr"></div>
+  <div class="anchor br"></div>
+  <div class="anchor bl"></div>
+
+  <!-- QR -->
+  <img class="qr" src="{{ qr_data_uri }}" alt="qr">
+  <div class="qr-uuid">{{ titul_uuid }}</div>
+
+  <!-- Sarlavha -->
+  <div class="title-bar">JAVOBLAR VARAQASI</div>
+  <div class="bot-handle">@{{ bot_username }}</div>
+
+  <!-- Meta -->
+  <div class="meta">
+    <div class="meta-col">
+      <div class="row"><span class="lbl">Test:</span> {{ test_title }}</div>
+      <div class="row"><span class="lbl">Guruh:</span> {{ group_name }}</div>
+    </div>
+    <div class="meta-col">
+      <div class="row"><span class="lbl">O'quvchi:</span> {{ student_name }}</div>
+      <div class="row"><span class="lbl">Savollar:</span> {{ question_count }} ta</div>
+    </div>
+  </div>
+
+  <!-- Namuna -->
+  <div class="sample">
+    <div><span class="sample-title">To'ldirish namunasi:</span> &nbsp; To'g'ri: <span class="sample-shapes">&#9679;</span> &nbsp; Noto'g'ri: ✕ &nbsp; ◯ &nbsp; &#8856;</div>
+    <div class="sample-note">Ko'k/qora ruchkada to'liq bo'yang</div>
+  </div>
+
+  <!-- Blok sarlavhalari -->
+  {% for bl in block_labels %}
+    <div class="block-label" style="left:{{ bl.x }}mm; top:{{ bl.y }}mm;">{{ bl.label }}</div>
+  {% endfor %}
+
+  <!-- Savol nomerlari -->
+  {% for qn in qnums %}
+    <div class="qnum" style="left:{{ qn.x }}mm; top:{{ qn.y }}mm;">{{ qn.n }}</div>
+  {% endfor %}
+
+  <!-- Doiralar -->
+  {% for b in bubbles %}
+    <div class="bubble"
+         style="left:{{ b.x }}mm; top:{{ b.y }}mm; width:{{ b.d }}mm; height:{{ b.d }}mm;">{{ b.letter }}</div>
+  {% endfor %}
+
+  <!-- Footer -->
+  <div class="footer">
+    Imzo: ____________________ &nbsp;&nbsp; Sana: ____________ &nbsp;&nbsp;
+    <span style="float:right;">ID: {{ titul_uuid }}</span>
+  </div>
+</body>
+</html>

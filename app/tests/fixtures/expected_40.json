@@ -1,0 +1,10 @@
+{
+  "_comment": "Namuna skan uchun kutilgan javoblar. Pipeline kalibrlangandan keyin to'ldiring.",
+  "_instructions": [
+    "1. Titul PDF generatsiya qiling (qcount=40)",
+    "2. Qo'lda to'ldiring (yoki simulyatsiya qiling)",
+    "3. Skanlab sample_scan_40.jpg sifatida shu papkaga qo'ying",
+    "4. Bu faylga to'g'ri javoblarni kiriting: {\"1\": \"A\", \"2\": \"B\", ...}",
+    "5. test_omr_regression.py ishlatib kalibrlang"
+  ]
+}

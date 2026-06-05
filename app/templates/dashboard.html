@@ -1,0 +1,1192 @@
+<!DOCTYPE html>
+<html lang="uz" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OMR Test Bot Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Outfit', 'sans-serif'] },
+                    colors: {
+                        brand: {
+                            50: '#eef2ff', 100: '#e0e7ff', 200: '#c7d2fe',
+                            500: '#6366f1', 600: '#4f46e5', 700: '#4338ca', 900: '#312e81',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { background-color: #0b0f19; color: #f3f4f6; }
+        .glass {
+            background: rgba(17, 24, 39, 0.7);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+        /* Mobile sidebar overlay */
+        #sidebar-overlay {
+            display: none; position: fixed; inset: 0;
+            background: rgba(0,0,0,0.6); z-index: 30;
+            backdrop-filter: blur(2px);
+        }
+        #sidebar-overlay.active { display: block; }
+        @media (max-width: 767px) {
+            #app-sidebar {
+                position: fixed; top: 0; left: 0; bottom: 0; z-index: 40;
+                transform: translateX(-100%);
+                transition: transform 0.3s ease;
+                width: 280px !important;
+            }
+            #app-sidebar.open {
+                transform: translateX(0);
+                box-shadow: 4px 0 30px rgba(0,0,0,0.5);
+            }
+        }
+
+        /* Back button */
+        .btn-back {
+            display: inline-flex; align-items: center; gap: 6px;
+            padding: 8px 16px; border-radius: 10px;
+            background: rgba(30,41,59,0.8); border: 1px solid rgba(71,85,105,0.5);
+            color: #94a3b8; font-size: 13px; font-weight: 600;
+            cursor: pointer; transition: all 0.2s;
+        }
+        .btn-back:hover { background: rgba(51,65,85,0.9); color: #e2e8f0; border-color: #6366f1; }
+
+        /* Search input */
+        .search-input {
+            width: 100%; padding: 10px 12px 10px 40px;
+            background: rgba(15,23,42,0.8); border: 1px solid rgba(71,85,105,0.4);
+            border-radius: 12px; color: #f1f5f9; font-size: 14px;
+            outline: none; transition: border-color 0.2s;
+        }
+        .search-input:focus { border-color: #6366f1; }
+        .search-input::placeholder { color: #475569; }
+
+        /* Loading skeleton */
+        .skeleton {
+            background: linear-gradient(90deg, #1e293b 25%, #334155 50%, #1e293b 75%);
+            background-size: 200% 100%;
+            animation: shimmer 1.5s infinite;
+            border-radius: 8px;
+        }
+        @keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+    </style>
+</head>
+<body class="font-sans antialiased min-h-screen flex flex-col md:flex-row overflow-x-hidden">
+
+<!-- Overlay -->
+<div id="sidebar-overlay" onclick="closeSidebar()"></div>
+
+<!-- Mobile Top Bar -->
+<div class="md:hidden flex items-center justify-between px-4 py-3 bg-slate-950 border-b border-slate-800 sticky top-0 z-20">
+    <div class="flex items-center space-x-3">
+        <div class="w-8 h-8 rounded-lg bg-gradient-to-tr from-brand-600 to-violet-500 flex items-center justify-center">
+            <i data-lucide="scan" class="w-4 h-4 text-white"></i>
+        </div>
+        <span class="font-bold text-white text-sm">OMR Test Bot</span>
+    </div>
+    <button onclick="toggleSidebar()" class="p-2 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition">
+        <i data-lucide="menu" class="w-5 h-5"></i>
+    </button>
+</div>
+
+<!-- Toast -->
+<div id="toast" class="fixed top-5 right-5 z-50 transform translate-y-[-100px] opacity-0 transition-all duration-300 pointer-events-none">
+    <div id="toast-inner" class="bg-emerald-500 text-white px-5 py-3 rounded-xl shadow-lg flex items-center space-x-2">
+        <i data-lucide="check-circle" class="w-5 h-5 shrink-0"></i>
+        <span id="toast-msg" class="font-medium">Muvaffaqiyatli!</span>
+    </div>
+</div>
+
+<!-- Sidebar -->
+<aside id="app-sidebar" class="w-64 bg-slate-950 border-r border-slate-800 flex flex-col justify-between shrink-0">
+    <div>
+        <div class="p-6 flex items-center space-x-3 border-b border-slate-800">
+            <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-brand-600 to-violet-500 flex items-center justify-center shadow-lg shadow-brand-500/20">
+                <i data-lucide="scan" class="w-6 h-6 text-white animate-pulse"></i>
+            </div>
+            <div>
+                <h1 class="font-bold text-lg leading-tight bg-gradient-to-r from-white to-slate-400 bg-clip-text text-transparent">OMR Test Bot</h1>
+                <span class="text-xs text-indigo-400 font-medium">SaaS Dashboard v1.0</span>
+            </div>
+        </div>
+        <nav class="p-4 space-y-1">
+            <button onclick="navigateTo('dashboard')" id="nav-dashboard"
+                class="w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-slate-400 hover:text-white hover:bg-slate-900 transition-all duration-200">
+                <i data-lucide="layout-dashboard" class="w-5 h-5"></i>
+                <span class="font-medium">Boshqaruv paneli</span>
+            </button>
+            <button onclick="navigateTo('groups')" id="nav-groups"
+                class="w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-slate-400 hover:text-white hover:bg-slate-900 transition-all duration-200">
+                <i data-lucide="users" class="w-5 h-5"></i>
+                <span class="font-medium">Guruhlarim</span>
+            </button>
+        </nav>
+    </div>
+    <div class="p-4 border-t border-slate-800 bg-slate-950/50 space-y-3">
+        <a href="#" id="sidebar-webapp-link" target="_blank"
+           class="flex items-center space-x-2 w-full px-3 py-2.5 rounded-xl bg-indigo-950/60 border border-indigo-500/20 hover:border-indigo-400/40 transition group">
+            <i data-lucide="external-link" class="w-4 h-4 text-indigo-400 group-hover:text-indigo-300 shrink-0"></i>
+            <span class="text-xs font-semibold text-indigo-300 group-hover:text-white truncate">Yangi tab'da ochish</span>
+        </a>
+        <div class="flex items-center space-x-3">
+            <div class="w-9 h-9 rounded-lg bg-indigo-950 flex items-center justify-center shrink-0">
+                <i data-lucide="bot" class="w-5 h-5 text-indigo-400"></i>
+            </div>
+            <div class="overflow-hidden">
+                <h4 class="text-sm font-semibold text-white truncate">Yordamchi Bot</h4>
+                <a href="https://t.me/Test_Yordamchi_Robot" target="_blank" class="text-xs text-slate-400 hover:text-indigo-400 truncate block">@Test_Yordamchi_Robot</a>
+            </div>
+        </div>
+    </div>
+</aside>
+
+<!-- Main -->
+<main class="flex-1 overflow-y-auto min-h-screen p-5 md:p-8 flex flex-col space-y-6">
+
+    <!-- Top Header -->
+    <header class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div class="flex items-center gap-4">
+            <!-- Back button — shows only on non-root views -->
+            <button id="btn-back-top" onclick="goBack()" class="btn-back hidden">
+                <i data-lucide="arrow-left" class="w-4 h-4"></i>
+                Orqaga
+            </button>
+            <div>
+                <h2 id="view-title" class="text-2xl md:text-3xl font-extrabold text-white tracking-tight">Boshqaruv paneli</h2>
+                <p id="view-desc" class="text-slate-400 mt-0.5 text-sm"></p>
+            </div>
+        </div>
+        <div class="flex items-center space-x-3 shrink-0">
+            <span class="flex h-3 w-3 relative">
+                <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span class="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+            </span>
+            <span class="text-sm font-medium text-emerald-400 bg-emerald-950/50 px-3 py-1 rounded-full border border-emerald-500/20">Live</span>
+        </div>
+    </header>
+
+    <!-- ═══════ VIEW: DASHBOARD ═══════ -->
+    <section id="view-dashboard" class="space-y-6 dynamic-view">
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <div class="glass p-5 rounded-2xl flex items-center justify-between">
+                <div class="space-y-1">
+                    <p class="text-xs font-medium text-slate-400">Guruhlar</p>
+                    <h3 id="stat-groups" class="text-3xl font-bold text-white">—</h3>
+                </div>
+                <div class="w-11 h-11 rounded-xl bg-blue-950/50 border border-blue-500/20 flex items-center justify-center">
+                    <i data-lucide="folder" class="w-5 h-5 text-blue-400"></i>
+                </div>
+            </div>
+            <div class="glass p-5 rounded-2xl flex items-center justify-between">
+                <div class="space-y-1">
+                    <p class="text-xs font-medium text-slate-400">Testlar</p>
+                    <h3 id="stat-tests" class="text-3xl font-bold text-white">—</h3>
+                </div>
+                <div class="w-11 h-11 rounded-xl bg-violet-950/50 border border-violet-500/20 flex items-center justify-center">
+                    <i data-lucide="clipboard-list" class="w-5 h-5 text-violet-400"></i>
+                </div>
+            </div>
+            <div class="glass p-5 rounded-2xl flex items-center justify-between">
+                <div class="space-y-1">
+                    <p class="text-xs font-medium text-slate-400">Skan (Bugun)</p>
+                    <h3 id="stat-scans" class="text-3xl font-bold text-white">—</h3>
+                </div>
+                <div class="w-11 h-11 rounded-xl bg-amber-950/50 border border-amber-500/20 flex items-center justify-center">
+                    <i data-lucide="aperture" class="w-5 h-5 text-amber-400"></i>
+                </div>
+            </div>
+            <div class="glass p-5 rounded-2xl flex items-center justify-between">
+                <div class="space-y-1">
+                    <p class="text-xs font-medium text-slate-400">Tekshirish kerak</p>
+                    <h3 id="stat-review" class="text-3xl font-bold text-rose-400">—</h3>
+                </div>
+                <div class="w-11 h-11 rounded-xl bg-rose-950/50 border border-rose-500/20 flex items-center justify-center">
+                    <i data-lucide="alert-triangle" class="w-5 h-5 text-rose-400"></i>
+                </div>
+            </div>
+        </div>
+        <div class="glass p-7 rounded-3xl bg-gradient-to-r from-slate-900 via-indigo-950/30 to-slate-900 border border-indigo-500/10 flex flex-col md:flex-row justify-between items-center gap-6">
+            <div class="space-y-2 max-w-xl text-center md:text-left">
+                <h3 class="text-xl font-bold text-white">Professional OMR Tahlillar Paneli</h3>
+                <p class="text-slate-400 text-sm leading-relaxed">
+                    Telegram bot orqali o'quvchilar yuborgan javoblar varaqalarini ushbu veb-panel orqali vizual tahlil qiling,
+                    savollar bo'yicha eng ko'p qilinayotgan xatolarni aniqlang va shubhali belgilarni qo'lda to'g'rilang.
+                </p>
+            </div>
+            <button onclick="navigateTo('groups')" class="px-6 py-3 bg-brand-600 hover:bg-brand-700 text-white font-semibold rounded-xl shadow-lg shadow-brand-500/20 transition-all shrink-0 text-sm">
+                Guruhlarni ko'rish →
+            </button>
+        </div>
+    </section>
+
+    <!-- ═══════ VIEW: GROUPS LIST ═══════ -->
+    <section id="view-groups" class="space-y-5 dynamic-view hidden">
+        <!-- Search -->
+        <div class="flex flex-col sm:flex-row gap-3">
+            <div class="relative flex-1 max-w-sm">
+                <i data-lucide="search" class="w-4 h-4 absolute left-3 top-3 text-slate-500 pointer-events-none"></i>
+                <input id="group-search-input" type="text" placeholder="Guruh nomini qidirish..."
+                    class="search-input" oninput="filterGroups(this.value)">
+            </div>
+        </div>
+        <div class="glass rounded-2xl overflow-hidden">
+            <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="border-b border-slate-800 text-slate-400 text-xs font-semibold uppercase tracking-wide">
+                            <th class="p-4 pl-5">Guruh Nomi</th>
+                            <th class="p-4 hidden sm:table-cell">Yaratilgan</th>
+                            <th class="p-4">O'quvchilar</th>
+                            <th class="p-4 hidden md:table-cell">Testlar</th>
+                            <th class="p-4 text-right pr-5">Amal</th>
+                        </tr>
+                    </thead>
+                    <tbody id="groups-list-body" class="divide-y divide-slate-800/50">
+                        <tr><td colspan="5" class="p-8 text-center text-slate-500">
+                            <div class="skeleton h-6 w-48 mx-auto"></div>
+                        </td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </section>
+
+    <!-- ═══════ VIEW: GROUP DETAIL ═══════ -->
+    <section id="view-group-detail" class="space-y-6 dynamic-view hidden">
+        <div class="flex flex-col lg:flex-row gap-6">
+            <!-- Students -->
+            <div class="w-full lg:w-1/2 space-y-3">
+                <div class="flex justify-between items-center">
+                    <h3 class="text-lg font-bold text-white flex items-center gap-2">
+                        <i data-lucide="users" class="w-5 h-5 text-brand-400"></i> O'quvchilar ro'yxati
+                    </h3>
+                    <span id="group-students-count" class="text-xs font-semibold px-2.5 py-1 bg-slate-800 rounded-full text-indigo-400 border border-slate-700">0 ta</span>
+                </div>
+                <!-- Student search -->
+                <div class="relative">
+                    <i data-lucide="search" class="w-4 h-4 absolute left-3 top-3 text-slate-500 pointer-events-none"></i>
+                    <input id="student-search-input" type="text" placeholder="Ism bo'yicha qidirish..."
+                        class="search-input" oninput="filterStudents(this.value)">
+                </div>
+                <div class="glass rounded-2xl p-3 max-h-[480px] overflow-y-auto no-scrollbar">
+                    <ul id="group-students-list" class="divide-y divide-slate-800/40"></ul>
+                </div>
+            </div>
+            <!-- Tests -->
+            <div class="w-full lg:w-1/2 space-y-3">
+                <div class="flex justify-between items-center">
+                    <h3 class="text-lg font-bold text-white flex items-center gap-2">
+                        <i data-lucide="clipboard-list" class="w-5 h-5 text-brand-400"></i> Olimpiadalar & Testlar
+                    </h3>
+                    <span id="group-tests-count" class="text-xs font-semibold px-2.5 py-1 bg-slate-800 rounded-full text-indigo-400 border border-slate-700">0 ta</span>
+                </div>
+                <div class="glass rounded-2xl p-3 max-h-[545px] overflow-y-auto no-scrollbar">
+                    <div id="group-tests-list" class="grid grid-cols-1 gap-3"></div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ═══════ VIEW: TEST DETAIL ═══════ -->
+    <section id="view-test-detail" class="space-y-6 dynamic-view hidden">
+        <!-- Meta cards -->
+        <div class="glass p-5 rounded-2xl grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <div class="space-y-1">
+                <span class="text-xs text-slate-400 font-medium">Savollar Soni</span>
+                <h4 id="test-meta-qcount" class="text-xl font-bold text-white">—</h4>
+            </div>
+            <div class="space-y-1">
+                <span class="text-xs text-slate-400 font-medium">Variantlar Soni</span>
+                <h4 id="test-meta-vcount" class="text-xl font-bold text-white">—</h4>
+            </div>
+            <div class="space-y-1">
+                <span class="text-xs text-slate-400 font-medium">O'rtacha natija</span>
+                <h4 id="test-meta-avg" class="text-xl font-bold text-indigo-400">—</h4>
+            </div>
+            <div class="space-y-1">
+                <span class="text-xs text-slate-400 font-medium">Jami topshirganlar</span>
+                <h4 id="test-meta-count" class="text-xl font-bold text-emerald-400">—</h4>
+            </div>
+        </div>
+        <!-- Chart -->
+        <div class="glass p-5 rounded-2xl space-y-3">
+            <h3 class="text-base font-bold text-white flex items-center gap-2">
+                <i data-lucide="bar-chart-3" class="w-5 h-5 text-brand-400"></i>
+                Item Analysis — Savollar bo'yicha to'g'ri topish ko'rsatkichi
+            </h3>
+            <div class="w-full h-72">
+                <canvas id="item-analysis-chart"></canvas>
+            </div>
+        </div>
+        <!-- Results table -->
+        <div class="space-y-3">
+            <h3 class="text-lg font-bold text-white flex items-center gap-2">
+                <i data-lucide="award" class="w-5 h-5 text-brand-400"></i> O'quvchilar natijalari
+            </h3>
+            <div class="glass rounded-2xl overflow-hidden">
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse">
+                        <thead>
+                            <tr class="border-b border-slate-800 text-slate-400 text-xs font-semibold uppercase tracking-wide">
+                                <th class="p-4 pl-5">F.I.Sh</th>
+                                <th class="p-4">Ball</th>
+                                <th class="p-4">Foiz</th>
+                                <th class="p-4 hidden sm:table-cell">Sana</th>
+                                <th class="p-4">Holat</th>
+                                <th class="p-4 text-right pr-5">Amallar</th>
+                            </tr>
+                        </thead>
+                        <tbody id="test-results-body" class="divide-y divide-slate-800/40"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ═══════ VIEW: STUDENT PROFILE ═══════ -->
+    <section id="view-student-detail" class="space-y-5 dynamic-view hidden">
+        <div class="glass p-5 rounded-2xl flex items-center gap-4">
+            <div class="w-14 h-14 rounded-full bg-gradient-to-tr from-brand-600 to-indigo-500 flex items-center justify-center shrink-0">
+                <i data-lucide="user" class="w-7 h-7 text-white"></i>
+            </div>
+            <div>
+                <h3 id="student-profile-name" class="text-xl font-bold text-white">—</h3>
+                <p id="student-profile-meta" class="text-slate-400 text-sm mt-0.5">—</p>
+            </div>
+        </div>
+        <h3 class="text-lg font-bold text-white">Topshirilgan testlar tarixi</h3>
+        <div class="glass rounded-2xl overflow-hidden">
+            <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="border-b border-slate-800 text-slate-400 text-xs font-semibold uppercase tracking-wide">
+                            <th class="p-4 pl-5">Test Nomi</th>
+                            <th class="p-4">Natija</th>
+                            <th class="p-4">Foiz</th>
+                            <th class="p-4 hidden sm:table-cell">Sana</th>
+                            <th class="p-4 text-right pr-5">Amallar</th>
+                        </tr>
+                    </thead>
+                    <tbody id="student-history-body" class="divide-y divide-slate-800/40"></tbody>
+                </table>
+            </div>
+        </div>
+    </section>
+
+    <!-- ═══════ VIEW: OMR REVIEW ═══════ -->
+    <section id="view-review" class="space-y-5 dynamic-view hidden">
+        <!-- Student info bar -->
+        <div id="review-student-bar" class="glass p-4 rounded-2xl flex items-center gap-3">
+            <div class="w-10 h-10 rounded-full bg-indigo-900/60 flex items-center justify-center shrink-0">
+                <i data-lucide="user" class="w-5 h-5 text-indigo-400"></i>
+            </div>
+            <div>
+                <h4 id="review-student-name" class="font-bold text-white text-sm">—</h4>
+                <p id="review-test-title" class="text-xs text-slate-400">—</p>
+            </div>
+            <div class="ml-auto text-right">
+                <span id="review-score-badge" class="text-xs font-semibold px-3 py-1.5 rounded-full bg-indigo-950 text-indigo-300 border border-indigo-500/20">—</span>
+            </div>
+        </div>
+
+        <div class="flex flex-col lg:flex-row gap-6">
+            <!-- Left: Image -->
+            <div class="w-full lg:w-1/2 space-y-3">
+                <div class="flex justify-between items-center">
+                    <h4 class="text-base font-bold text-white flex items-center gap-2">
+                        <i data-lucide="image" class="w-5 h-5 text-brand-400"></i> Javoblar varaqasi
+                    </h4>
+                    <div id="review-img-toggle" class="flex bg-slate-900 border border-slate-800 rounded-lg p-1 gap-1">
+                        <button onclick="toggleReviewImage('original')" id="btn-img-original"
+                            class="px-3 py-1.5 rounded-md text-xs font-semibold bg-brand-600 text-white transition">Haqiqiy</button>
+                        <button onclick="toggleReviewImage('debug')" id="btn-img-debug"
+                            class="px-3 py-1.5 rounded-md text-xs font-semibold text-slate-400 transition">Annotatsiya</button>
+                    </div>
+                </div>
+                <div class="glass rounded-2xl p-3 flex justify-center items-center min-h-[300px] border border-slate-800/50 relative w-full overflow-hidden">
+                    <div id="review-img-placeholder" class="text-center text-slate-500">
+                        <i data-lucide="image-off" class="w-10 h-10 mx-auto mb-2 opacity-40"></i>
+                        <p class="text-sm">Rasm yuklanmoqda...</p>
+                    </div>
+                    <img id="review-sheet-image" src="" alt="Varaq surati"
+                        class="max-w-full max-h-[680px] object-contain rounded-lg hidden"
+                        onload="this.classList.remove('hidden'); document.getElementById('review-img-placeholder').classList.add('hidden');"
+                        onerror="document.getElementById('review-img-placeholder').innerHTML='<i data-lucide=\'image-off\' class=\'w-10 h-10 mx-auto mb-2 opacity-40\'></i><p class=\'text-sm text-rose-400\'>Rasm topilmadi yoki yuklanmadi</p>'; lucide.createIcons();">
+                    <iframe id="review-sheet-pdf" src=""
+                        class="w-full h-[680px] rounded-lg hidden border-0"
+                        onload="document.getElementById('review-img-placeholder').classList.add('hidden');"></iframe>
+                </div>
+            </div>
+
+            <!-- Right: Bubble grid -->
+            <div class="w-full lg:w-1/2 flex flex-col gap-4">
+                <div class="space-y-2">
+                    <h4 class="text-base font-bold text-white flex items-center gap-2">
+                        <i data-lucide="edit-3" class="w-5 h-5 text-brand-400"></i> Bo'yalgan javoblar
+                    </h4>
+                    <p class="text-xs text-slate-400 leading-relaxed">
+                        Noaniq savollar <span class="text-amber-400 font-bold">sariq</span>,
+                        xatolar <span class="text-rose-400 font-bold">qizil</span> rang bilan belgilangan.
+                        Harfga bosib javobni o'zgartiring.
+                    </p>
+                </div>
+                <div class="glass rounded-2xl p-4 flex-1 max-h-[520px] overflow-y-auto no-scrollbar grid grid-cols-2 gap-x-4 gap-y-2.5">
+                    <div id="bubble-grid-col1" class="space-y-2"></div>
+                    <div id="bubble-grid-col2" class="space-y-2"></div>
+                </div>
+                <div class="flex items-center gap-3 border-t border-slate-800/60 pt-4">
+                    <button onclick="saveReviewData()"
+                        class="flex-1 py-2.5 px-5 bg-brand-600 hover:bg-brand-700 text-white font-semibold rounded-xl shadow-lg shadow-brand-500/20 transition flex items-center justify-center gap-2 text-sm">
+                        <i data-lucide="save" class="w-4 h-4"></i> Saqlash va qayta baholash
+                    </button>
+                </div>
+            </div>
+        </div>
+    </section>
+
+</main>
+
+<script>
+/* ═══════════════════════════════════════════════════════
+   GLOBAL STATE
+═══════════════════════════════════════════════════════ */
+const BASE_API = window.location.origin;
+let currentView = 'dashboard';
+let viewHistory = [];
+let viewParams = {};
+
+// Cached data for filter
+let allGroupsData = [];
+let allStudentsData = [];
+
+// OMR Review state
+let activeAttemptId = null;
+let activeAttemptAnswers = {};
+let activeAttemptDetails = {};
+let activeAttemptOriginalImg = '';
+let activeAttemptDebugImg = '';
+let activeAttemptVariantCount = 4;
+let activeAttemptQcount = 40;
+
+let itemAnalysisChartInstance = null;
+
+/* ═══════════════════════════════════════════════════════
+   UTILITIES
+═══════════════════════════════════════════════════════ */
+function escHtml(str) {
+    if (str === null || str === undefined) return '';
+    return String(str)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
+
+function showToast(msg, type = 'success') {
+    const toast = document.getElementById('toast');
+    const inner = document.getElementById('toast-inner');
+    document.getElementById('toast-msg').innerText = msg;
+    inner.className = `${type === 'error' ? 'bg-rose-500' : 'bg-emerald-500'} text-white px-5 py-3 rounded-xl shadow-lg flex items-center space-x-2`;
+    toast.classList.remove('translate-y-[-100px]', 'opacity-0');
+    toast.classList.add('translate-y-0', 'opacity-100');
+    setTimeout(() => {
+        toast.classList.add('translate-y-[-100px]', 'opacity-0');
+        toast.classList.remove('translate-y-0', 'opacity-100');
+    }, 3500);
+}
+
+/* ═══════════════════════════════════════════════════════
+   MOBILE SIDEBAR
+═══════════════════════════════════════════════════════ */
+function toggleSidebar() {
+    document.getElementById('app-sidebar').classList.toggle('open');
+    document.getElementById('sidebar-overlay').classList.toggle('active');
+}
+function closeSidebar() {
+    document.getElementById('app-sidebar').classList.remove('open');
+    document.getElementById('sidebar-overlay').classList.remove('active');
+}
+
+/* ═══════════════════════════════════════════════════════
+   EVENT DELEGATION — data-action
+═══════════════════════════════════════════════════════ */
+document.addEventListener('click', function(e) {
+    const btn = e.target.closest('[data-action]');
+    if (!btn) return;
+    const action = btn.dataset.action;
+    if (action === 'go-group') {
+        navigateTo('group-detail', { groupId: Number(btn.dataset.groupId), groupName: btn.dataset.groupName });
+    } else if (action === 'go-student') {
+        navigateTo('student-detail', { studentId: Number(btn.dataset.studentId), studentName: btn.dataset.studentName });
+    } else if (action === 'go-test') {
+        navigateTo('test-detail', { testId: Number(btn.dataset.testId), testTitle: btn.dataset.testTitle });
+    } else if (action === 'go-review') {
+        const aId = Number(btn.dataset.attemptId);
+        if (!aId) { showToast("Bu o'quvchi hali test topshirmagan!", 'error'); return; }
+        navigateTo('review', { attemptId: aId, studentName: btn.dataset.studentName });
+    }
+});
+
+/* ═══════════════════════════════════════════════════════
+   NAVIGATION ROUTER
+═══════════════════════════════════════════════════════ */
+function navigateTo(viewName, params = {}) {
+    if (viewName !== currentView) {
+        viewHistory.push({ view: currentView, params: { ...viewParams } });
+    }
+    currentView = viewName;
+    viewParams = params;
+    closeSidebar();
+
+    document.querySelectorAll('.dynamic-view').forEach(el => el.classList.add('hidden'));
+    document.getElementById('nav-dashboard').classList.remove('bg-slate-900', 'text-white');
+    document.getElementById('nav-groups').classList.remove('bg-slate-900', 'text-white');
+
+    const viewTitle = document.getElementById('view-title');
+    const viewDesc  = document.getElementById('view-desc');
+    const btnBack   = document.getElementById('btn-back-top');
+
+    // Show back button for non-root views
+    const rootViews = ['dashboard', 'groups'];
+    if (rootViews.includes(viewName)) {
+        btnBack.classList.add('hidden');
+    } else {
+        btnBack.classList.remove('hidden');
+    }
+
+    if (viewName === 'dashboard') {
+        document.getElementById('view-dashboard').classList.remove('hidden');
+        document.getElementById('nav-dashboard').classList.add('bg-slate-900', 'text-white');
+        viewTitle.innerText = 'Boshqaruv paneli';
+        viewDesc.innerText  = 'Skanerlash va baholash natijalari umumiy statistikasi.';
+        fetchDashboardStats();
+    }
+    else if (viewName === 'groups') {
+        document.getElementById('view-groups').classList.remove('hidden');
+        document.getElementById('nav-groups').classList.add('bg-slate-900', 'text-white');
+        viewTitle.innerText = 'Guruhlarim';
+        viewDesc.innerText  = "Yaratilgan sinflar va faol guruhlar ro'yxati.";
+        document.getElementById('group-search-input').value = '';
+        fetchGroups();
+    }
+    else if (viewName === 'group-detail') {
+        document.getElementById('view-group-detail').classList.remove('hidden');
+        viewTitle.innerText = params.groupName || 'Guruh tafsilotlari';
+        viewDesc.innerText  = "Guruh o'quvchilari ro'yxati va testlar boshqaruvi.";
+        document.getElementById('student-search-input').value = '';
+        fetchGroupDetails(params.groupId);
+    }
+    else if (viewName === 'test-detail') {
+        document.getElementById('view-test-detail').classList.remove('hidden');
+        viewTitle.innerText = params.testTitle || 'Test natijalari';
+        viewDesc.innerText  = "Savollar soni bo'yicha tahlillar va to'liq natijalar.";
+        fetchTestDetails(params.testId);
+    }
+    else if (viewName === 'student-detail') {
+        document.getElementById('view-student-detail').classList.remove('hidden');
+        viewTitle.innerText = params.studentName || "O'quvchi profili";
+        viewDesc.innerText  = "O'quvchi erishgan natijalar va topshirgan testlar.";
+        fetchStudentDetails(params.studentId);
+    }
+    else if (viewName === 'review') {
+        document.getElementById('view-review').classList.remove('hidden');
+        viewTitle.innerText = 'Javoblarni tahrirlash';
+        viewDesc.innerText  = "O'quvchi javoblarini qo'lda tahrirlash va qayta baholash.";
+        loadAttemptReview(params.attemptId);
+    }
+
+    setTimeout(() => lucide.createIcons(), 50);
+}
+
+function goBack() {
+    if (viewHistory.length > 0) {
+        const prev = viewHistory.pop();
+        // Remove the entry that navigateTo will push (to avoid double push)
+        const savedHistory = [...viewHistory];
+        navigateTo(prev.view, prev.params);
+        viewHistory = savedHistory;
+    } else {
+        navigateTo('dashboard');
+    }
+}
+
+/* ═══════════════════════════════════════════════════════
+   API: DASHBOARD STATS
+═══════════════════════════════════════════════════════ */
+async function fetchDashboardStats() {
+    try {
+        const res  = await fetch(`${BASE_API}/api/web/dashboard-stats`);
+        const data = await res.json();
+        document.getElementById('stat-groups').innerText  = data.groups_count;
+        document.getElementById('stat-tests').innerText   = data.tests_count;
+        document.getElementById('stat-scans').innerText   = data.scans_today;
+        document.getElementById('stat-review').innerText  = data.needs_review_count;
+    } catch (err) { console.error('Stats xato:', err); }
+}
+
+/* ═══════════════════════════════════════════════════════
+   API: GROUPS LIST + FILTER
+═══════════════════════════════════════════════════════ */
+async function fetchGroups() {
+    const body = document.getElementById('groups-list-body');
+    body.innerHTML = `<tr><td colspan="5" class="p-8 text-center"><div class="skeleton h-5 w-48 mx-auto"></div></td></tr>`;
+    try {
+        const res = await fetch(`${BASE_API}/api/web/groups`);
+        allGroupsData = await res.json();
+        renderGroupsTable(allGroupsData);
+    } catch (err) {
+        body.innerHTML = `<tr><td colspan="5" class="p-6 text-center text-rose-400 text-sm">Guruhlarni yuklashda xatolik.</td></tr>`;
+        console.error(err);
+    }
+}
+
+function filterGroups(query) {
+    const q = query.trim().toLowerCase();
+    const filtered = q ? allGroupsData.filter(g => g.name.toLowerCase().includes(q)) : allGroupsData;
+    renderGroupsTable(filtered);
+}
+
+function renderGroupsTable(groups) {
+    const body = document.getElementById('groups-list-body');
+    body.innerHTML = '';
+    if (groups.length === 0) {
+        body.innerHTML = `<tr><td colspan="5" class="p-8 text-center text-slate-500 text-sm">Guruh topilmadi.</td></tr>`;
+        return;
+    }
+    groups.forEach(g => {
+        const tr = document.createElement('tr');
+        tr.className = 'hover:bg-slate-900/30 transition-all text-sm';
+        const btn = document.createElement('button');
+        btn.className = 'px-3 py-1.5 bg-slate-900 border border-slate-700 hover:border-brand-500 hover:text-white rounded-lg text-xs font-semibold text-slate-400 transition-all';
+        btn.textContent = 'Batafsil';
+        btn.dataset.action   = 'go-group';
+        btn.dataset.groupId   = g.id;
+        btn.dataset.groupName = g.name;
+        tr.innerHTML = `
+            <td class="p-4 pl-5 font-semibold text-white"></td>
+            <td class="p-4 text-slate-400 hidden sm:table-cell text-xs">${escHtml(g.created_at)}</td>
+            <td class="p-4 text-slate-300 font-medium">${g.students_count} ta</td>
+            <td class="p-4 text-slate-300 font-medium hidden md:table-cell">${g.tests_count} ta</td>
+            <td class="p-4 pr-5 text-right"></td>
+        `;
+        tr.cells[0].textContent = g.name;
+        tr.cells[4].appendChild(btn);
+        body.appendChild(tr);
+    });
+}
+
+/* ═══════════════════════════════════════════════════════
+   API: GROUP DETAIL + STUDENT FILTER
+═══════════════════════════════════════════════════════ */
+async function fetchGroupDetails(groupId) {
+    document.getElementById('group-students-list').innerHTML = `<li class="p-5 text-center"><div class="skeleton h-5 w-40 mx-auto"></div></li>`;
+    document.getElementById('group-tests-list').innerHTML    = `<div class="p-5 text-center"><div class="skeleton h-5 w-40 mx-auto"></div></div>`;
+    try {
+        const res   = await fetch(`${BASE_API}/api/web/groups/${groupId}`);
+        const group = await res.json();
+
+        allStudentsData = group.students || [];
+        document.getElementById('group-students-count').innerText = `${allStudentsData.length} ta`;
+        renderStudentsList(allStudentsData);
+
+        // Tests
+        const testsList = document.getElementById('group-tests-list');
+        const tests     = group.tests || [];
+        document.getElementById('group-tests-count').innerText = `${tests.length} ta`;
+        testsList.innerHTML = '';
+        if (tests.length === 0) {
+            testsList.innerHTML = `<div class="p-5 text-center text-slate-500 text-sm">Hozircha testlar berilmagan.</div>`;
+        } else {
+            tests.forEach(t => {
+                const card = document.createElement('div');
+                card.className = 'glass p-4 rounded-xl border border-slate-800 hover:border-indigo-500/30 transition-all flex justify-between items-center gap-3';
+
+                const infoDiv = document.createElement('div');
+                infoDiv.className = 'space-y-0.5 min-w-0';
+                const h4 = document.createElement('h4');
+                h4.className = 'font-bold text-white text-sm truncate';
+                h4.textContent = t.title;
+                const p = document.createElement('p');
+                p.className = 'text-xs text-slate-400';
+                p.textContent = `${t.question_count} savol · ${t.variant_count} variant`;
+                infoDiv.appendChild(h4);
+                infoDiv.appendChild(p);
+
+                const btn = document.createElement('button');
+                btn.className = 'shrink-0 px-3 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg transition text-xs font-semibold flex items-center gap-1.5';
+                btn.dataset.action    = 'go-test';
+                btn.dataset.testId    = t.id;
+                btn.dataset.testTitle = t.title;
+                btn.innerHTML = `<i data-lucide="line-chart" class="w-3.5 h-3.5"></i> Ko'rish`;
+
+                card.appendChild(infoDiv);
+                card.appendChild(btn);
+                testsList.appendChild(card);
+            });
+        }
+        setTimeout(() => lucide.createIcons(), 50);
+    } catch (err) {
+        console.error('Guruh tafsilotlari xato:', err);
+    }
+}
+
+function filterStudents(query) {
+    const q = query.trim().toLowerCase();
+    const filtered = q ? allStudentsData.filter(s => s.full_name.toLowerCase().includes(q)) : allStudentsData;
+    renderStudentsList(filtered);
+}
+
+function renderStudentsList(students) {
+    const ul = document.getElementById('group-students-list');
+    ul.innerHTML = '';
+    if (students.length === 0) {
+        ul.innerHTML = `<li class="p-5 text-center text-slate-500 text-sm">O'quvchi topilmadi.</li>`;
+        return;
+    }
+    students.forEach(s => {
+        const li = document.createElement('li');
+        li.className = 'py-3 px-1 flex justify-between items-center text-sm border-b border-slate-800/40 last:border-0';
+
+        const nameDiv = document.createElement('div');
+        const h4 = document.createElement('h4');
+        h4.className = 'font-semibold text-white text-sm';
+        h4.textContent = s.full_name;
+        const span = document.createElement('span');
+        span.className = 'text-xs text-slate-500';
+        span.textContent = `ID: ${s.id}`;
+        nameDiv.appendChild(h4);
+        nameDiv.appendChild(span);
+
+        const btn = document.createElement('button');
+        btn.className = 'text-xs font-semibold text-brand-400 hover:text-white transition shrink-0 ml-2';
+        btn.textContent = 'Profil →';
+        btn.dataset.action     = 'go-student';
+        btn.dataset.studentId  = s.id;
+        btn.dataset.studentName = s.full_name;
+
+        li.appendChild(nameDiv);
+        li.appendChild(btn);
+        ul.appendChild(li);
+    });
+}
+
+/* ═══════════════════════════════════════════════════════
+   API: TEST DETAIL
+═══════════════════════════════════════════════════════ */
+async function fetchTestDetails(testId) {
+    const body = document.getElementById('test-results-body');
+    body.innerHTML = `<tr><td colspan="6" class="p-8 text-center"><div class="skeleton h-5 w-48 mx-auto"></div></td></tr>`;
+    try {
+        const res  = await fetch(`${BASE_API}/api/web/tests/${testId}`);
+        const test = await res.json();
+
+        document.getElementById('test-meta-qcount').innerText = `${test.question_count} ta`;
+        document.getElementById('test-meta-vcount').innerText = `${test.variant_count} ta (A–${String.fromCharCode(64 + test.variant_count)})`;
+        document.getElementById('test-meta-avg').innerText    = `${test.stats.avg_percent ?? 0}%`;
+        document.getElementById('test-meta-count').innerText  = `${test.stats.count} ta`;
+
+        renderItemAnalysisChart(test.item_analysis);
+
+        body.innerHTML = '';
+        if (!test.results || test.results.length === 0) {
+            body.innerHTML = `<tr><td colspan="6" class="p-8 text-center text-slate-500">Hech qaysi o'quvchi hali ushbu testni topshirmagan.</td></tr>`;
+            return;
+        }
+
+        test.results.forEach((r, idx) => {
+            const badge = r.needs_review
+                ? `<span class="px-2 py-0.5 text-xs font-semibold rounded-full bg-amber-950 text-amber-400 border border-amber-500/20">Noaniq</span>`
+                : `<span class="px-2 py-0.5 text-xs font-semibold rounded-full bg-emerald-950 text-emerald-400 border border-emerald-500/20">OK</span>`;
+
+            const tr = document.createElement('tr');
+            tr.className = 'hover:bg-slate-900/30 transition-all text-sm';
+
+            // Rank color
+            const rankColors = ['text-amber-400', 'text-slate-300', 'text-amber-700'];
+            const rankEl = idx < 3
+                ? `<span class="${rankColors[idx]} font-bold">${idx + 1}</span>`
+                : `<span class="text-slate-500">${idx + 1}</span>`;
+
+            // Tekshirish button — only if attempt_id exists
+            const reviewBtn = document.createElement('button');
+            if (r.attempt_id) {
+                reviewBtn.className = 'px-3 py-1.5 rounded-lg text-xs font-semibold bg-brand-600 hover:bg-brand-700 text-white transition-all';
+                reviewBtn.textContent = 'Tekshirish';
+                reviewBtn.dataset.action      = 'go-review';
+                reviewBtn.dataset.attemptId   = r.attempt_id;
+                reviewBtn.dataset.studentName = r.student_name;
+            } else {
+                reviewBtn.className = 'px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 text-slate-500 cursor-not-allowed';
+                reviewBtn.textContent = 'Yo\'q';
+                reviewBtn.disabled = true;
+            }
+
+            // Student profile link
+            const profileBtn = document.createElement('button');
+            profileBtn.className = 'text-xs text-indigo-400 hover:text-white font-medium transition mr-2';
+            profileBtn.textContent = r.student_name;
+            profileBtn.dataset.action     = 'go-student';
+            profileBtn.dataset.studentId  = r.student_id;
+            profileBtn.dataset.studentName = r.student_name;
+
+            tr.innerHTML = `
+                <td class="p-4 pl-5 font-medium text-white"></td>
+                <td class="p-4 text-slate-300 font-bold">${r.score}/${r.total}</td>
+                <td class="p-4 font-semibold ${r.percent >= 70 ? 'text-emerald-400' : r.percent >= 50 ? 'text-amber-400' : 'text-rose-400'}">${r.percent}%</td>
+                <td class="p-4 text-slate-400 text-xs hidden sm:table-cell">${r.created_at || '—'}</td>
+                <td class="p-4">${badge}</td>
+                <td class="p-4 pr-5 text-right"></td>
+            `;
+            const nameTd = tr.cells[0];
+            nameTd.appendChild(profileBtn);
+
+            const actionTd = tr.cells[5];
+            actionTd.appendChild(reviewBtn);
+
+            body.appendChild(tr);
+        });
+    } catch (err) {
+        body.innerHTML = `<tr><td colspan="6" class="p-6 text-center text-rose-400 text-sm">Test ma'lumotlarini yuklashda xatolik.</td></tr>`;
+        console.error(err);
+    }
+}
+
+/* ═══════════════════════════════════════════════════════
+   CHART.JS
+═══════════════════════════════════════════════════════ */
+function renderItemAnalysisChart(data) {
+    const ctx = document.getElementById('item-analysis-chart').getContext('2d');
+    if (itemAnalysisChartInstance) itemAnalysisChartInstance.destroy();
+    if (!data || data.length === 0) return;
+
+    const sorted = [...data].sort((a, b) => parseInt(a.question) - parseInt(b.question));
+    const labels = sorted.map(d => `${d.question}`);
+    const values = sorted.map(d => d.correct_percent);
+    const colors = values.map(v => v < 50 ? 'rgba(239,68,68,0.75)' : v < 75 ? 'rgba(245,158,11,0.75)' : 'rgba(99,102,241,0.75)');
+
+    itemAnalysisChartInstance = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels,
+            datasets: [{ label: "To'g'ri (%)", data: values, backgroundColor: colors, borderRadius: 5, borderWidth: 0 }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                tooltip: { callbacks: { label: ctx => `${ctx.raw}% to'g'ri` } }
+            },
+            scales: {
+                y: { max: 100, grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#64748b', font: { family: 'Outfit' } } },
+                x: { grid: { display: false }, ticks: { color: '#64748b', font: { family: 'Outfit', size: 9 } } }
+            }
+        }
+    });
+}
+
+/* ═══════════════════════════════════════════════════════
+   API: STUDENT PROFILE
+═══════════════════════════════════════════════════════ */
+async function fetchStudentDetails(studentId) {
+    if (!studentId) {
+        showToast("O'quvchi ID topilmadi!", 'error');
+        return;
+    }
+    const body = document.getElementById('student-history-body');
+    body.innerHTML = `<tr><td colspan="5" class="p-8 text-center"><div class="skeleton h-5 w-48 mx-auto"></div></td></tr>`;
+    try {
+        const res     = await fetch(`${BASE_API}/api/web/students/${studentId}`);
+        if (!res.ok) { throw new Error(`HTTP ${res.status}`); }
+        const student = await res.json();
+
+        document.getElementById('student-profile-name').textContent = student.full_name;
+        document.getElementById('student-profile-meta').textContent =
+            `Guruh: ${student.group_name} · Telegram ID: ${student.telegram_id || 'Ulanmagan'}`;
+
+        body.innerHTML = '';
+        if (!student.history || student.history.length === 0) {
+            body.innerHTML = `<tr><td colspan="5" class="p-8 text-center text-slate-500 text-sm">O'quvchi hali hech qanday test topshirmagan.</td></tr>`;
+            return;
+        }
+        student.history.forEach(h => {
+            const tr = document.createElement('tr');
+            tr.className = 'hover:bg-slate-900/30 transition-all text-sm';
+
+            const reviewBtn = document.createElement('button');
+            if (h.attempt_id) {
+                reviewBtn.className = 'px-3 py-1.5 rounded-lg text-xs font-semibold bg-brand-600 hover:bg-brand-700 text-white transition-all';
+                reviewBtn.textContent = 'Tekshirish';
+                reviewBtn.dataset.action      = 'go-review';
+                reviewBtn.dataset.attemptId   = h.attempt_id;
+                reviewBtn.dataset.studentName = student.full_name;
+            } else {
+                reviewBtn.className = 'px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 text-slate-500 cursor-not-allowed';
+                reviewBtn.textContent = 'Yo\'q';
+                reviewBtn.disabled = true;
+            }
+
+            tr.innerHTML = `
+                <td class="p-4 pl-5 font-semibold text-white"></td>
+                <td class="p-4 text-slate-300 font-bold">${h.score ?? '—'}/${h.total ?? '—'}</td>
+                <td class="p-4 font-semibold ${h.percent >= 70 ? 'text-emerald-400' : h.percent >= 50 ? 'text-amber-400' : 'text-rose-400'}">${h.percent ?? 0}%</td>
+                <td class="p-4 text-slate-400 text-xs hidden sm:table-cell">${h.date || '—'}</td>
+                <td class="p-4 pr-5 text-right"></td>
+            `;
+            tr.cells[0].textContent = h.test_title;
+            tr.cells[4].appendChild(reviewBtn);
+            body.appendChild(tr);
+        });
+    } catch (err) {
+        body.innerHTML = `<tr><td colspan="5" class="p-6 text-center text-rose-400 text-sm">O'quvchi ma'lumotlarini yuklashda xatolik: ${err.message}</td></tr>`;
+        console.error(err);
+    }
+}
+
+/* ═══════════════════════════════════════════════════════
+   API: ATTEMPT REVIEW
+═══════════════════════════════════════════════════════ */
+function setReviewMedia(url) {
+    const img = document.getElementById('review-sheet-image');
+    const iframe = document.getElementById('review-sheet-pdf');
+    const placeholder = document.getElementById('review-img-placeholder');
+    
+    img.classList.add('hidden');
+    iframe.classList.add('hidden');
+    placeholder.classList.remove('hidden');
+    
+    if (!url) {
+        placeholder.innerHTML = `
+            <i data-lucide="image-off" class="w-10 h-10 mx-auto mb-2 opacity-40"></i>
+            <p class="text-sm text-slate-500">Rasm yoki PDF mavjud emas</p>`;
+        lucide.createIcons();
+        return;
+    }
+    
+    const resolvedUrl = new URL(url, window.location.origin).href;
+    const isPdf = resolvedUrl.toLowerCase().endsWith('.pdf') || resolvedUrl.toLowerCase().includes('.pdf#');
+    
+    if (isPdf) {
+        const targetSrc = resolvedUrl.split('#')[0] + '#toolbar=0&navpanes=0';
+        if (iframe.src === targetSrc) {
+            placeholder.classList.add('hidden');
+            iframe.classList.remove('hidden');
+        } else {
+            iframe.src = targetSrc;
+            iframe.classList.remove('hidden');
+        }
+    } else {
+        if (img.src === resolvedUrl) {
+            placeholder.classList.add('hidden');
+            img.classList.remove('hidden');
+        } else {
+            img.src = resolvedUrl;
+        }
+    }
+}
+
+async function loadAttemptReview(attemptId) {
+    if (!attemptId) { showToast("Attempt ID topilmadi!", 'error'); return; }
+
+    // Reset image/pdf state
+    document.getElementById('review-sheet-image').classList.add('hidden');
+    document.getElementById('review-sheet-pdf').classList.add('hidden');
+    document.getElementById('review-sheet-pdf').src = '';
+    document.getElementById('review-img-placeholder').innerHTML = `
+        <i data-lucide="loader-2" class="w-8 h-8 mx-auto mb-2 opacity-50 animate-spin"></i>
+        <p class="text-sm">Yuklanmoqda...</p>`;
+    lucide.createIcons();
+
+    try {
+        const res  = await fetch(`${BASE_API}/api/web/attempts/${attemptId}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+
+        activeAttemptId           = data.id;
+        activeAttemptAnswers      = data.detected   || {};
+        activeAttemptDetails      = data.detail      || {};
+        activeAttemptVariantCount = data.variant_count || 4;
+        activeAttemptQcount = data.question_count
+            || Object.keys(activeAttemptAnswers).length
+            || data.total
+            || 40;
+
+        activeAttemptOriginalImg = data.source_url ? `${BASE_API}${data.source_url}` : '';
+        activeAttemptDebugImg    = data.debug_url   ? `${BASE_API}${data.debug_url}`  : '';
+
+        // Student bar
+        document.getElementById('review-student-name').textContent  = data.student_name || '—';
+        document.getElementById('review-test-title').textContent    = data.test_title   || '—';
+        document.getElementById('review-score-badge').textContent   =
+            data.score != null ? `${data.score}/${data.total} · ${data.percent ?? 0}%` : 'Natija yo\'q';
+
+        // Image/PDF setup
+        const btnOriginal = document.getElementById('btn-img-original');
+        const btnDebug    = document.getElementById('btn-img-debug');
+        const toggleDiv   = document.getElementById('review-img-toggle');
+
+        if (!activeAttemptDebugImg) {
+            toggleDiv.classList.add('hidden');
+        } else {
+            toggleDiv.classList.remove('hidden');
+        }
+
+        // Try debug first, then original
+        const imgSrc = activeAttemptDebugImg || activeAttemptOriginalImg;
+        setReviewMedia(imgSrc);
+
+        if (imgSrc) {
+            if (activeAttemptDebugImg) {
+                btnDebug.classList.add('bg-brand-600','text-white');
+                btnDebug.classList.remove('text-slate-400');
+                btnOriginal.classList.remove('bg-brand-600','text-white');
+                btnOriginal.classList.add('text-slate-400');
+            } else {
+                btnOriginal.classList.add('bg-brand-600','text-white');
+                btnOriginal.classList.remove('text-slate-400');
+                btnDebug.classList.remove('bg-brand-600','text-white');
+                btnDebug.classList.add('text-slate-400');
+            }
+        }
+
+        buildBubbleEditGrid();
+    } catch (err) {
+        showToast(`Review yuklashda xatolik: ${err.message}`, 'error');
+        console.error(err);
+    }
+}
+
+function toggleReviewImage(type) {
+    const btnOriginal = document.getElementById('btn-img-original');
+    const btnDebug    = document.getElementById('btn-img-debug');
+
+    const newSrc = type === 'original' ? activeAttemptOriginalImg : (activeAttemptDebugImg || activeAttemptOriginalImg);
+    if (!newSrc) return;
+
+    setReviewMedia(newSrc);
+
+    [btnOriginal, btnDebug].forEach(b => b.classList.remove('bg-brand-600','text-white'));
+    [btnOriginal, btnDebug].forEach(b => b.classList.add('text-slate-400'));
+    const activeBtn = type === 'original' ? btnOriginal : btnDebug;
+    activeBtn.classList.add('bg-brand-600','text-white');
+    activeBtn.classList.remove('text-slate-400');
+}
+
+/* ═══════════════════════════════════════════════════════
+   BUBBLE GRID
+═══════════════════════════════════════════════════════ */
+function buildBubbleEditGrid() {
+    const col1 = document.getElementById('bubble-grid-col1');
+    const col2 = document.getElementById('bubble-grid-col2');
+    col1.innerHTML = '';
+    col2.innerHTML = '';
+
+    const options = Array.from({ length: activeAttemptVariantCount }, (_, i) => String.fromCharCode(65 + i));
+    const half    = Math.ceil(activeAttemptQcount / 2);
+
+    for (let i = 1; i <= activeAttemptQcount; i++) {
+        const q_str     = i.toString();
+        const selected  = activeAttemptAnswers[q_str] ?? null;
+        const detail    = activeAttemptDetails[q_str] || {};
+
+        let warnCls = 'border-slate-800 bg-slate-900/40';
+        if (selected === null) warnCls = 'border-amber-500/30 bg-amber-950/20';
+        else if (detail.ok === false) warnCls = 'border-rose-500/20 bg-rose-950/10';
+
+        const row = document.createElement('div');
+        row.className = `p-2.5 rounded-xl border flex items-center justify-between transition-all ${warnCls}`;
+
+        let icon = '';
+        if (selected === null)  icon = `<i data-lucide="help-circle" class="w-3.5 h-3.5 text-amber-500 shrink-0"></i>`;
+        else if (detail.ok)     icon = `<i data-lucide="check"       class="w-3.5 h-3.5 text-emerald-400 shrink-0"></i>`;
+        else                    icon = `<i data-lucide="x"           class="w-3.5 h-3.5 text-rose-500 shrink-0"></i>`;
+
+        row.innerHTML = `
+            <div class="flex items-center gap-1.5 shrink-0">
+                ${icon}
+                <span class="font-bold text-xs text-slate-300 w-5">${i}.</span>
+            </div>
+            <div class="flex items-center gap-1">
+                ${options.map(opt => {
+                    const active = selected === opt
+                        ? 'bg-indigo-600 text-white font-bold border-indigo-500 shadow-md shadow-indigo-600/30'
+                        : 'bg-slate-950 hover:bg-slate-800 text-slate-400 hover:text-white border-slate-800';
+                    return `<button onclick="selectBubbleAnswer('${q_str}','${opt}')" class="w-6 h-6 text-xs border rounded-full ${active} transition flex items-center justify-center">${opt}</button>`;
+                }).join('')}
+                <button onclick="selectBubbleAnswer('${q_str}',null)"
+                    class="w-6 h-6 text-xs border rounded-full flex items-center justify-center transition hover:bg-slate-800 ${selected === null ? 'bg-slate-700 text-white border-slate-600' : 'text-slate-500 bg-slate-950 border-slate-800'}"
+                    title="Tozalash">–</button>
+            </div>
+        `;
+
+        (i <= half ? col1 : col2).appendChild(row);
+    }
+    lucide.createIcons();
+}
+
+function selectBubbleAnswer(q_str, option) {
+    activeAttemptAnswers[q_str] = option;
+    buildBubbleEditGrid();
+}
+
+/* ═══════════════════════════════════════════════════════
+   API: SAVE REVIEW
+═══════════════════════════════════════════════════════ */
+async function saveReviewData() {
+    if (!activeAttemptId) return;
+    const btn = event.currentTarget;
+    btn.disabled = true;
+    btn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Saqlanmoqda...`;
+    lucide.createIcons();
+    try {
+        const res  = await fetch(`${BASE_API}/api/web/attempts/${activeAttemptId}/review`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ corrected_answers: activeAttemptAnswers })
+        });
+        const data = await res.json();
+        if (data.success) {
+            showToast('Muvaffaqiyatli saqlandi! Ball qayta hisoblandi.');
+            setTimeout(() => goBack(), 900);
+        } else {
+            showToast('Saqlashda xatolik!', 'error');
+            btn.disabled = false;
+            btn.innerHTML = `<i data-lucide="save" class="w-4 h-4"></i> Saqlash va qayta baholash`;
+            lucide.createIcons();
+        }
+    } catch (err) {
+        showToast('Server bilan aloqa xatosi!', 'error');
+        btn.disabled = false;
+        btn.innerHTML = `<i data-lucide="save" class="w-4 h-4"></i> Saqlash va qayta baholash`;
+        lucide.createIcons();
+        console.error(err);
+    }
+}
+
+/* ═══════════════════════════════════════════════════════
+   INIT
+═══════════════════════════════════════════════════════ */
+window.addEventListener('DOMContentLoaded', () => {
+    lucide.createIcons();
+    const link = document.getElementById('sidebar-webapp-link');
+    if (link) link.href = window.location.origin + '/dashboard';
+    document.getElementById('nav-dashboard').classList.add('bg-slate-900', 'text-white');
+    fetchDashboardStats();
+});
+</script>
+</body>
+</html>

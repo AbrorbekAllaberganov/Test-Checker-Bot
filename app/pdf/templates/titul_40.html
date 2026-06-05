@@ -1,0 +1,14 @@
+{#
+  titul_40.html — 40 talik javoblar varaqasi.
+  Tuzilma base.html bilan bir xil (anchor + QR + meta + grid). Bloklar:
+  A(1-20), B(21-40) — ikki ustun. Doira/nomer/blok-sarlavha koordinatalari
+  app/omr/layout.py (LAYOUTS_MM[40]) dan keladi. render.py shu kontekstni beradi:
+    bubbles, qnums, block_labels  (hammasi 40-talik uchun hisoblangan).
+  Shuning uchun bu fayl base.html ni include qiladi — takrorlanmaslik uchun.
+
+  render.py implementatsiyasi base.html ni to'g'ridan-to'g'ri render qilsa,
+  bu fayl shunchaki "qaysi qcount" belgisini tasdiqlash uchun ham xizmat qiladi.
+  Antigravity: agar Jinja {% include %} ishlatsangiz, base.html dagi kontent
+  shu yerga tushadi; aks holda render.py to'g'ridan base.html ni tanlaydi.
+#}
+{% include "base.html" %}
