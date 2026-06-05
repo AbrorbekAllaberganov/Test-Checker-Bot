@@ -21,6 +21,7 @@ jobs:
           message: |
             🚀 *OMR Test Bot: Deploy boshlandi!*
             
+            
             *Repo:* ${{ github.repository }}
             *Branch:* `${{ github.ref_name }}`
             *Muallif:* ${{ github.actor }}
