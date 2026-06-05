@@ -13,6 +13,21 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Send Telegram notification on start
+        uses: appleboy/telegram-action@master
+        with:
+          to: ${{ secrets.TELEGRAM_CHAT_ID_DEPLOY }}
+          token: ${{ secrets.TELEGRAM_BOT_TOKEN_DEPLOY }}
+          message: |
+            🚀 *OMR Test Bot: Deploy boshlandi!*
+            
+            *Repo:* ${{ github.repository }}
+            *Branch:* `${{ github.ref_name }}`
+            *Muallif:* ${{ github.actor }}
+            *Commit habari:*
+            `${{ github.event.head_commit.message }}`
+          format: markdown
+
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -35,3 +50,32 @@ jobs:
             
             # 5. Disk to'lib qolmasligi uchun eski keraksiz docker imagelarni tozalash
             docker image prune -f
+
+      - name: Send Telegram notification on success
+        if: success()
+        uses: appleboy/telegram-action@master
+        with:
+          to: ${{ secrets.TELEGRAM_CHAT_ID_DEPLOY }}
+          token: ${{ secrets.TELEGRAM_BOT_TOKEN_DEPLOY }}
+          message: |
+            ✅ *OMR Test Bot: Deploy muvaffaqiyatli yakunlandi!* 🎉
+            
+            *Repo:* ${{ github.repository }}
+            *Branch:* `${{ github.ref_name }}`
+            *Commit:* `${{ github.sha }}`
+          format: markdown
+
+      - name: Send Telegram notification on failure
+        if: failure()
+        uses: appleboy/telegram-action@master
+        with:
+          to: ${{ secrets.TELEGRAM_CHAT_ID_DEPLOY }}
+          token: ${{ secrets.TELEGRAM_BOT_TOKEN_DEPLOY }}
+          message: |
+            ❌ *OMR Test Bot: Deployda xatolik yuz berdi!* ⚠️
+            
+            *Repo:* ${{ github.repository }}
+            *Branch:* `${{ github.ref_name }}`
+            *Commit:* `${{ github.sha }}`
+            Batafsil ma'lumotni GitHub Actions run loglaridan ko'rishingiz mumkin.
+          format: markdown
