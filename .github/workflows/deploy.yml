@@ -1,0 +1,37 @@
+name: Deploy OMR Test Bot
+
+on:
+  push:
+    branches:
+      - main  # deploy triggering branch
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          script: |
+            # 1. Project directoryga o'tish (Serverdagi loyiha yo'lini kiriting)
+            cd /var/www/omr-test-bot
+            
+            # 2. Eng so'nggi kodni olish
+            git pull origin main
+            
+            # 3. Yangilangan Docker servicelarni qayta build va run qilish (downtimesiz)
+            docker-compose up -d --build api bot worker
+            
+            # 4. DB migratsiyalarni ishga tushirish
+            docker-compose exec -T api alembic upgrade head
+            
+            # 5. Disk to'lib qolmasligi uchun eski keraksiz docker imagelarni tozalash
+            docker image prune -f
