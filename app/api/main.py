@@ -6,9 +6,9 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.core.config import get_settings
@@ -86,27 +86,19 @@ def create_app() -> FastAPI:
         return HTMLResponse(html)
 
     @app.get("/dashboard", response_class=HTMLResponse)
-    async def dashboard(request: Request):
-        """Dashboard sahifasi — cookie tekshiriladi, yo'q bo'lsa /login ga yo'naltiriladi."""
-        from app.api.routes.auth import decode_jwt
+    async def dashboard():
+        """
+        Dashboard Mini App sahifasi.
 
-        token = request.cookies.get("dashboard_session")
-        if not token:
-            return RedirectResponse("/login", status_code=302)
-        try:
-            decode_jwt(token)
-        except ValueError:
-            return RedirectResponse("/login?error=expired", status_code=302)
-
+        Autentifikatsiya endi sahifa darajasida emas, balki API darajasida
+        (Telegram initData imzosi orqali) amalga oshiriladi. Shu sababli
+        HTML to'g'ridan-to'g'ri beriladi — har bir /api/web/* so'rovi
+        Authorization header'idagi initData bilan tekshiriladi.
+        """
         template_path = Path(__file__).parent.parent / "templates" / "dashboard.html"
         if not template_path.exists():
             return HTMLResponse("<h1>Dashboard HTML shabloni topilmadi</h1>", status_code=404)
         return HTMLResponse(template_path.read_text(encoding="utf-8"))
-
-    @app.get("/logout")
-    async def logout_redirect():
-        """Logout shortcut — /api/auth/logout ga yo'naltiradi."""
-        return RedirectResponse("/api/auth/logout", status_code=302)
 
     return app
 

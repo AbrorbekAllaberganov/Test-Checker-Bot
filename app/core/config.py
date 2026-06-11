@@ -25,8 +25,12 @@ class Settings(BaseSettings):
     bot_token: str
     bot_username: str = "omr_test_bot"
 
-    # Web Dashboard URL (bot ichidan ochish uchun)
-    web_app_url: str = ""  # Masalan: https://yourdomain.com/dashboard
+    # Web Dashboard URL (foydalanuvchi brauzeriga ko'rsatiladigan tashqi URL)
+    web_app_url: str = ""  # Masalan: http://localhost:8000 yoki https://yourdomain.com
+
+    # Ichki API URL — bot Docker ichidan API ga so'rov yuborish uchun
+    # Docker compose'da bu odatda http://api:8000
+    internal_api_url: str = ""  # Bo'sh bo'lsa web_app_url ishlatiladi
 
     # ── Database ──────────────────────────────────────────────────────────
     database_url: str  # asyncpg

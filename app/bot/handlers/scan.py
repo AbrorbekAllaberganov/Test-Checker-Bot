@@ -52,7 +52,7 @@ async def _enqueue_scan(file_path: str, chat_id: int, db_factory) -> str:
     log.info("Bot: Urinish (Attempt) yaratilmoqda. File: %s, Chat ID: %d", file_path, chat_id)
     async with db_factory() as db:
         pending = Attempt(
-            titul_id=1,  # placeholder
+            titul_id=None,  # hali noma'lum — worker QR ni o'qib to'ldiradi
             detected={},
             status="pending",
             source_file=file_path,

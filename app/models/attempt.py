@@ -40,8 +40,10 @@ class Attempt(Base):
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    titul_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("tituls.id", ondelete="CASCADE"), nullable=False
+    # Skan kelganda titul hali noma'lum (QR worker tomonidan o'qiladi),
+    # shu sababli pending attempt NULL titul_id bilan yaratiladi.
+    titul_id: Mapped[Optional[int]] = mapped_column(
+        BigInteger, ForeignKey("tituls.id", ondelete="CASCADE"), nullable=True
     )
     detected: Mapped[dict] = mapped_column(JSONB, nullable=False)
     score: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)

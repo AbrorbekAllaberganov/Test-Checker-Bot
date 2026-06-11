@@ -1,27 +1,25 @@
 """
-app/api/routes/auth.py — Dashboard autentifikatsiyasi.
+app/api/routes/auth.py — Telegram Mini App (Web App) autentifikatsiyasi.
 
-Oqim:
-  1. Bot (internal key bilan) POST /api/auth/dashboard-token chaqiradi
-     → Redis'ga {token: telegram_id} yoziladi, TTL=5 daqiqa
-     → token qaytariladi
-  2. Bot foydalanuvchiga {web_app_url}?token={token} URL yuboradi
-  3. Brauzer GET /api/auth/login?token={token} ga kiradi
-     → Redis'dan telegram_id olinadi, token o'chiriladi (one-time)
-     → JWT cookie set qilinadi (HttpOnly, 7 kun)
-     → /dashboard ga redirect
-  4. GET /api/auth/logout — cookie o'chiriladi
+Oqim (Mini App):
+  1. Foydalanuvchi botdagi "📊 Dashboard" web_app tugmasini bosadi
+     → Telegram Mini App'ni ochadi va `initData` (imzolangan) beradi
+  2. Frontend har bir API so'roviga `Authorization: tma <initData>` header qo'shadi
+  3. Backend `initData` imzosini bot_token bilan HMAC-SHA256 orqali tekshiradi
+     → ichidan telegram user.id olinadi, DB'dan User topiladi
+  4. Token/cookie/Redis kerak emas — imzo har so'rovda tekshiriladi
+
+Bu eski Redis-token + JWT-cookie oqimining o'rnini bosadi.
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
 import logging
-import uuid
-from datetime import datetime, timedelta, timezone
+from urllib.parse import parse_qsl
 
-import jwt
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from fastapi.responses import HTMLResponse, RedirectResponse
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,184 +31,118 @@ log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
-_REDIS_TOKEN_PREFIX = "dashboard_token:"
-_REDIS_TOKEN_TTL = 300  # 5 daqiqa
+# initData auth_date dan keyin necha soniyada eskirgan deb hisoblanadi.
+# 0 — eskirishni tekshirmaslik (Mini App sessiyasi uzoq ochiq turishi mumkin).
+_INIT_DATA_MAX_AGE = 0
 
 
-# ─── Redis yordamchi ────────────────────────────────────────────────────────
+# ─── Telegram Mini App initData validatsiyasi ───────────────────────────────
 
-async def _get_redis():
-    """Async Redis klient."""
-    import redis.asyncio as aioredis
+def validate_init_data(init_data: str) -> dict:
+    """
+    Telegram WebApp `initData` qatorini tekshiradi.
+
+    Algoritm (Telegram rasmiy):
+        secret_key = HMAC_SHA256(key="WebAppData", msg=bot_token)
+        hash       = HMAC_SHA256(key=secret_key,  msg=data_check_string)
+
+    Muvaffaqiyatli bo'lsa — Telegram `user` dict qaytaradi.
+    Xato bo'lsa — ValueError ko'taradi.
+    """
     settings = get_settings()
-    return aioredis.from_url(settings.redis_url, decode_responses=True)
 
-
-# ─── JWT yordamchi ──────────────────────────────────────────────────────────
-
-def _create_jwt(telegram_id: int) -> str:
-    """JWT token yaratish."""
-    settings = get_settings()
-    expire = datetime.now(timezone.utc) + timedelta(days=settings.jwt_expire_days)
-    payload = {
-        "sub": str(telegram_id),
-        "telegram_id": telegram_id,
-        "exp": expire,
-    }
-    return jwt.encode(payload, settings.secret_key, algorithm="HS256")
-
-
-def decode_jwt(token: str) -> dict:
-    """JWT tokenni tekshirish va payload qaytarish. Xato bo'lsa ValueError."""
-    settings = get_settings()
     try:
-        return jwt.decode(token, settings.secret_key, algorithms=["HS256"])
-    except jwt.ExpiredSignatureError:
-        raise ValueError("Token muddati o'tgan")
-    except jwt.InvalidTokenError:
-        raise ValueError("Token noto'g'ri")
+        parsed = dict(parse_qsl(init_data, keep_blank_values=True))
+    except Exception:
+        raise ValueError("initData formati noto'g'ri")
 
+    received_hash = parsed.pop("hash", None)
+    if not received_hash:
+        raise ValueError("hash topilmadi")
 
-# ─── Bot uchun: token generatsiya ───────────────────────────────────────────
+    # data_check_string — qolgan barcha maydonlar alifbo tartibida
+    data_check_string = "\n".join(f"{k}={parsed[k]}" for k in sorted(parsed.keys()))
 
-class DashboardTokenRequest(BaseModel):
-    telegram_id: int
+    secret_key = hmac.new(b"WebAppData", settings.bot_token.encode(), hashlib.sha256).digest()
+    calc_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
 
+    if not hmac.compare_digest(calc_hash, received_hash):
+        raise ValueError("imzo noto'g'ri")
 
-class DashboardTokenResponse(BaseModel):
-    token: str
-    expires_in: int  # soniya
+    # Ixtiyoriy: auth_date eskirganini tekshirish
+    if _INIT_DATA_MAX_AGE > 0:
+        import time
+        try:
+            auth_date = int(parsed.get("auth_date", "0"))
+        except ValueError:
+            auth_date = 0
+        if auth_date and (time.time() - auth_date) > _INIT_DATA_MAX_AGE:
+            raise ValueError("initData muddati o'tgan")
 
-
-def _verify_internal_key(request: Request) -> None:
-    """Internal API key tekshirish."""
-    settings = get_settings()
-    key = request.headers.get("X-Internal-Key", "")
-    if key != settings.internal_api_key:
-        raise HTTPException(status_code=403, detail="Ruxsat yo'q")
-
-
-@router.post("/dashboard-token", response_model=DashboardTokenResponse)
-async def generate_dashboard_token(
-    body: DashboardTokenRequest,
-    request: Request,
-):
-    """
-    Bot chaqiradi: foydalanuvchi uchun vaqtinchalik token generatsiya qilish.
-    Internal API key talab qilinadi.
-    """
-    _verify_internal_key(request)
-
-    token = str(uuid.uuid4())
-    redis = await _get_redis()
+    user_raw = parsed.get("user")
+    if not user_raw:
+        raise ValueError("user ma'lumoti topilmadi")
     try:
-        await redis.set(
-            f"{_REDIS_TOKEN_PREFIX}{token}",
-            str(body.telegram_id),
-            ex=_REDIS_TOKEN_TTL,
-        )
-    finally:
-        await redis.aclose()
-
-    log.info("Dashboard token yaratildi: telegram_id=%d", body.telegram_id)
-    return DashboardTokenResponse(token=token, expires_in=_REDIS_TOKEN_TTL)
+        return json.loads(user_raw)
+    except Exception:
+        raise ValueError("user ma'lumoti JSON formatida emas")
 
 
-# ─── Brauzer uchun: token → JWT cookie ──────────────────────────────────────
-
-@router.get("/login")
-async def login_with_token(
-    token: str,
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    Brauzer chaqiradi: URL'dagi token ni JWT cookie ga almashtiradi.
-    Token bir martalik (Redis'dan o'chiriladi).
-    """
-    redis = await _get_redis()
-    try:
-        redis_key = f"{_REDIS_TOKEN_PREFIX}{token}"
-        telegram_id_str = await redis.get(redis_key)
-        if not telegram_id_str:
-            log.warning("Login urinishi: token topilmadi yoki muddati o'tgan: %s", token[:8])
-            return RedirectResponse(
-                url="/login?error=expired",
-                status_code=302,
-            )
-        # One-time: darhol o'chirish
-        await redis.delete(redis_key)
-    finally:
-        await redis.aclose()
-
-    telegram_id = int(telegram_id_str)
-
-    # Foydalanuvchini DB'dan tekshirish
-    result = await db.execute(
-        select(User).where(User.telegram_id == telegram_id)
-    )
-    user = result.scalar_one_or_none()
-    if user is None:
-        log.warning("Login urinishi: user DB'da topilmadi: telegram_id=%d", telegram_id)
-        return RedirectResponse(url="/login?error=not_registered", status_code=302)
-
-    # JWT cookie yaratish
-    jwt_token = _create_jwt(telegram_id)
-    settings = get_settings()
-
-    response = RedirectResponse(url="/dashboard", status_code=302)
-    response.set_cookie(
-        key="dashboard_session",
-        value=jwt_token,
-        max_age=settings.jwt_expire_days * 24 * 3600,
-        httponly=True,       # JS o'qiy olmaydi
-        samesite="lax",      # CSRF himoya
-        secure=False,        # HTTPS bo'lganda True qiling
-    )
-    log.info("Dashboard login muvaffaqiyatli: telegram_id=%d, user=%s", telegram_id, user.full_name)
-    return response
+def _extract_init_data(request: Request) -> str:
+    """So'rov header'laridan initData qatorini ajratib oladi."""
+    auth = request.headers.get("Authorization", "")
+    if auth.startswith("tma "):
+        return auth[4:].strip()
+    # Muqobil header (frontend qulayligi uchun)
+    return request.headers.get("X-Telegram-Init-Data", "").strip()
 
 
-# ─── Logout ─────────────────────────────────────────────────────────────────
+# ─── Dependency: joriy foydalanuvchi (Mini App) ─────────────────────────────
 
-@router.get("/logout")
-async def logout():
-    """Cookie'ni o'chiradi va login sahifasiga yo'naltiradi."""
-    response = RedirectResponse(url="/login", status_code=302)
-    response.delete_cookie(key="dashboard_session", httponly=True, samesite="lax")
-    log.info("Dashboard logout")
-    return response
-
-
-# ─── Dependency: joriy foydalanuvchi ────────────────────────────────────────
-
-async def get_current_user(
+async def get_webapp_user(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> User:
     """
-    FastAPI Dependency: cookie'dan JWT o'qib joriy foydalanuvchini qaytaradi.
-    Cookie yo'q yoki noto'g'ri bo'lsa 401 xatosi.
+    FastAPI Dependency: `initData` imzosini tekshirib joriy foydalanuvchini qaytaradi.
+    Imzo yo'q yoki noto'g'ri bo'lsa — 401.
     """
-    token = request.cookies.get("dashboard_session")
-    if not token:
+    init_data = _extract_init_data(request)
+    if not init_data:
         raise HTTPException(
             status_code=401,
-            detail="Kirish talab qilinadi. Bot orqali tizimga kiring.",
+            detail="Avtorizatsiya yo'q. Dashboard'ni bot orqali (Mini App) oching.",
         )
+
     try:
-        payload = decode_jwt(token)
+        tg_user = validate_init_data(init_data)
     except ValueError as e:
-        raise HTTPException(status_code=401, detail=str(e))
+        log.warning("Mini App auth rad etildi: %s", e)
+        raise HTTPException(status_code=401, detail=f"Avtorizatsiya xatosi: {e}")
 
-    telegram_id = payload.get("telegram_id")
+    telegram_id = tg_user.get("id")
     if not telegram_id:
-        raise HTTPException(status_code=401, detail="Token noto'g'ri format")
+        raise HTTPException(status_code=401, detail="Telegram ID topilmadi")
 
-    result = await db.execute(
-        select(User).where(User.telegram_id == int(telegram_id))
-    )
+    result = await db.execute(select(User).where(User.telegram_id == int(telegram_id)))
     user = result.scalar_one_or_none()
     if user is None:
-        raise HTTPException(status_code=401, detail="Foydalanuvchi topilmadi")
+        log.warning("Mini App: user DB'da topilmadi: telegram_id=%s", telegram_id)
+        raise HTTPException(
+            status_code=401,
+            detail="Siz ro'yxatdan o'tmagansiz. Avval botda /start buyrug'ini yuboring.",
+        )
 
     return user
+
+
+# ─── /api/auth/me — joriy foydalanuvchi haqida ma'lumot ─────────────────────
+
+@router.get("/me")
+async def me(user: User = Depends(get_webapp_user)):
+    """Frontend uchun: joriy foydalanuvchi ma'lumoti (auth tekshiruvi ham)."""
+    return {
+        "telegram_id": user.telegram_id,
+        "full_name": user.full_name,
+        "username": user.username,
+    }

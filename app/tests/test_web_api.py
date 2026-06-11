@@ -8,6 +8,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
 from app.api.main import app
+from app.api.routes.auth import get_webapp_user
 from app.core.db import get_session_factory
 from app.models.user import User
 from app.models.group import Group
@@ -79,6 +80,10 @@ async def test_web_ui_endpoints():
         test_id = test.id
         attempt_id = attempt.id
 
+    # Mini App initData auth'ni testda chetlab o'tish (imzo tekshiruvi o'rniga
+    # to'g'ridan-to'g'ri test foydalanuvchisini qaytaramiz).
+    app.dependency_overrides[get_webapp_user] = lambda: user
+
     try:
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as ac:
@@ -139,6 +144,9 @@ async def test_web_ui_endpoints():
             assert review_data["needs_review"] is False
 
     finally:
+        # Auth override'ni tozalash
+        app.dependency_overrides.pop(get_webapp_user, None)
+
         # 9. Test ma'lumotlarini bazadan o'chirish (Tozalash)
         async with factory() as db:
             att_obj = await db.get(Attempt, attempt_id)

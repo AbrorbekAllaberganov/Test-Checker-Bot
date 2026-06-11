@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import logging
 
-import httpx
 from aiogram import Router, F
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
@@ -113,59 +112,6 @@ async def help_handler(call: CallbackQuery) -> None:
     await call.answer()
 
 
-@router.callback_query(F.data == "dashboard_open")
-async def dashboard_open_handler(call: CallbackQuery) -> None:
-    """
-    Dashboard tugmasi bosilganda:
-    1. API orqali vaqtinchalik token generatsiya qilinadi (Redis, TTL=5min)
-    2. Foydalanuvchiga /api/auth/login?token=... URL yuboriladi
-    """
-    settings = get_settings()
-
-    if not settings.web_app_url:
-        await call.answer("Dashboard URL sozlanmagan.", show_alert=True)
-        return
-
-    await call.answer()
-
-    api_base = _get_api_base(settings.web_app_url)
-    token_url = f"{api_base}/api/auth/dashboard-token"
-
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(
-                token_url,
-                json={"telegram_id": call.from_user.id},
-                headers={"X-Internal-Key": settings.internal_api_key},
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            token = data["token"]
-    except Exception as e:
-        log.error("Dashboard token olishda xatolik: %s", e)
-        await call.message.answer(
-            "❌ Dashboard havolasini olishda xatolik yuz berdi. Qayta urinib ko'ring.",
-            parse_mode="HTML",
-        )
-        return
-
-    dashboard_url = f"{api_base}/api/auth/login?token={token}"
-
-    await call.message.answer(
-        "🔐 <b>Dashboard havolasi</b>\n\n"
-        "Quyidagi havola faqat <b>5 daqiqa</b> davomida ishlaydi.\n"
-        "Havola bir martalik — faqat siz uchun!\n\n"
-        f'👉 <a href="{dashboard_url}">Dashboard\'ni ochish</a>',
-        parse_mode="HTML",
-        disable_web_page_preview=True,
-    )
-
-
-def _get_api_base(web_app_url: str) -> str:
-    """
-    web_app_url dan protocol+host ajratib oladi.
-    Masalan: "https://domain.com/dashboard" → "https://domain.com"
-    """
-    from urllib.parse import urlparse
-    parsed = urlparse(web_app_url)
-    return f"{parsed.scheme}://{parsed.netloc}"
+# Dashboard endi Telegram Mini App (web_app tugmasi) sifatida to'g'ridan-to'g'ri
+# ochiladi (app/bot/keyboards/inline.py:main_menu_inline_kb). Token generatsiyasi
+# yoki alohida callback handler kerak emas — auth API darajasida initData orqali.

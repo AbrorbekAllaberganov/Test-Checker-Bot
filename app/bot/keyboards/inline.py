@@ -25,12 +25,14 @@ def main_menu_inline_kb(web_app_url: Optional[str] = None) -> InlineKeyboardMark
         ],
         [InlineKeyboardButton(text="ℹ️ Yordam", callback_data="menu_help")],
     ]
-    # Dashboard tugmasi — callback orqali token generatsiya qilinadi
+    # Dashboard tugmasi — Telegram Mini App (web_app) sifatida ochiladi.
+    # URL majburiy HTTPS bo'lishi kerak (lokal uchun ngrok tunnel).
     if web_app_url:
+        dashboard_url = f"{web_app_url.rstrip('/')}/dashboard"
         rows.insert(2, [
             InlineKeyboardButton(
                 text="📊 Dashboard (Web Panel)",
-                callback_data="dashboard_open",
+                web_app=WebAppInfo(url=dashboard_url),
             )
         ])
     return InlineKeyboardMarkup(inline_keyboard=rows)

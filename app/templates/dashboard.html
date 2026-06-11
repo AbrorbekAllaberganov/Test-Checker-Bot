@@ -7,6 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
@@ -466,6 +467,33 @@
    GLOBAL STATE
 ═══════════════════════════════════════════════════════ */
 const BASE_API = window.location.origin;
+
+/* ─── Telegram Mini App ─────────────────────────────────────
+   initData — Telegram tomonidan imzolangan qator. Har bir API
+   so'roviga Authorization header sifatida yuboriladi va backend
+   uni bot_token bilan tekshiradi. ───────────────────────────── */
+const TG = window.Telegram ? window.Telegram.WebApp : null;
+const INIT_DATA = TG ? TG.initData : '';
+
+/**
+ * fetch o'rami — barcha API so'rovlariga Telegram initData auth header qo'shadi.
+ * Auth xato (401) bo'lsa foydalanuvchiga tushunarli xabar ko'rsatadi.
+ */
+async function apiFetch(url, options = {}) {
+    const headers = Object.assign({}, options.headers, {
+        'Authorization': 'tma ' + INIT_DATA,
+        // ngrok-free oraliq ogohlantirish sahifasini chetlab o'tish (JSON o'rniga HTML qaytmasligi uchun)
+        'ngrok-skip-browser-warning': 'true',
+    });
+    const res = await fetch(url, Object.assign({}, options, { headers }));
+    if (res.status === 401) {
+        let detail = 'Avtorizatsiya talab qilinadi.';
+        try { detail = (await res.clone().json()).detail || detail; } catch (e) {}
+        showToast(detail, 'error');
+    }
+    return res;
+}
+
 let currentView = 'dashboard';
 let viewHistory = [];
 let viewParams = {};
@@ -629,7 +657,7 @@ function goBack() {
 ═══════════════════════════════════════════════════════ */
 async function fetchDashboardStats() {
     try {
-        const res  = await fetch(`${BASE_API}/api/web/dashboard-stats`);
+        const res  = await apiFetch(`${BASE_API}/api/web/dashboard-stats`);
         const data = await res.json();
         document.getElementById('stat-groups').innerText  = data.groups_count;
         document.getElementById('stat-tests').innerText   = data.tests_count;
@@ -645,7 +673,7 @@ async function fetchGroups() {
     const body = document.getElementById('groups-list-body');
     body.innerHTML = `<tr><td colspan="5" class="p-8 text-center"><div class="skeleton h-5 w-48 mx-auto"></div></td></tr>`;
     try {
-        const res = await fetch(`${BASE_API}/api/web/groups`);
+        const res = await apiFetch(`${BASE_API}/api/web/groups`);
         allGroupsData = await res.json();
         renderGroupsTable(allGroupsData);
     } catch (err) {
@@ -696,7 +724,7 @@ async function fetchGroupDetails(groupId) {
     document.getElementById('group-students-list').innerHTML = `<li class="p-5 text-center"><div class="skeleton h-5 w-40 mx-auto"></div></li>`;
     document.getElementById('group-tests-list').innerHTML    = `<div class="p-5 text-center"><div class="skeleton h-5 w-40 mx-auto"></div></div>`;
     try {
-        const res   = await fetch(`${BASE_API}/api/web/groups/${groupId}`);
+        const res   = await apiFetch(`${BASE_API}/api/web/groups/${groupId}`);
         const group = await res.json();
 
         allStudentsData = group.students || [];
@@ -791,7 +819,7 @@ async function fetchTestDetails(testId) {
     const body = document.getElementById('test-results-body');
     body.innerHTML = `<tr><td colspan="6" class="p-8 text-center"><div class="skeleton h-5 w-48 mx-auto"></div></td></tr>`;
     try {
-        const res  = await fetch(`${BASE_API}/api/web/tests/${testId}`);
+        const res  = await apiFetch(`${BASE_API}/api/web/tests/${testId}`);
         const test = await res.json();
 
         document.getElementById('test-meta-qcount').innerText = `${test.question_count} ta`;
@@ -910,7 +938,7 @@ async function fetchStudentDetails(studentId) {
     const body = document.getElementById('student-history-body');
     body.innerHTML = `<tr><td colspan="5" class="p-8 text-center"><div class="skeleton h-5 w-48 mx-auto"></div></td></tr>`;
     try {
-        const res     = await fetch(`${BASE_API}/api/web/students/${studentId}`);
+        const res     = await apiFetch(`${BASE_API}/api/web/students/${studentId}`);
         if (!res.ok) { throw new Error(`HTTP ${res.status}`); }
         const student = await res.json();
 
@@ -1012,7 +1040,7 @@ async function loadAttemptReview(attemptId) {
     lucide.createIcons();
 
     try {
-        const res  = await fetch(`${BASE_API}/api/web/attempts/${attemptId}`);
+        const res  = await apiFetch(`${BASE_API}/api/web/attempts/${attemptId}`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
 
@@ -1153,7 +1181,7 @@ async function saveReviewData() {
     btn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Saqlanmoqda...`;
     lucide.createIcons();
     try {
-        const res  = await fetch(`${BASE_API}/api/web/attempts/${activeAttemptId}/review`, {
+        const res  = await apiFetch(`${BASE_API}/api/web/attempts/${activeAttemptId}/review`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ corrected_answers: activeAttemptAnswers })
@@ -1182,9 +1210,23 @@ async function saveReviewData() {
 ═══════════════════════════════════════════════════════ */
 window.addEventListener('DOMContentLoaded', () => {
     lucide.createIcons();
+
+    // Telegram Mini App initsializatsiyasi
+    if (TG) {
+        TG.ready();
+        TG.expand();
+    }
+
     const link = document.getElementById('sidebar-webapp-link');
     if (link) link.href = window.location.origin + '/dashboard';
     document.getElementById('nav-dashboard').classList.add('bg-slate-900', 'text-white');
+
+    // Telegram tashqarisida (oddiy brauzerda) ochilsa — initData bo'lmaydi
+    if (!INIT_DATA) {
+        showToast("Bu panel Telegram bot ichidagi 'Dashboard' tugmasi orqali ochilishi kerak.", 'error');
+        return;
+    }
+
     fetchDashboardStats();
 });
 </script>

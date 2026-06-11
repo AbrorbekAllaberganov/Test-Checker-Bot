@@ -22,14 +22,14 @@ from app.models.titul import Titul
 from app.models.user import User
 from app.services import history as history_svc
 from app.services.grading import grade
-from app.api.routes.auth import get_current_user
+from app.api.routes.auth import get_webapp_user
 
 log = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/web",
     tags=["web-ui"],
-    dependencies=[Depends(get_current_user)],  # Barcha endpointlar himoyalangan
+    dependencies=[Depends(get_webapp_user)],  # Barcha endpointlar Mini App initData bilan himoyalangan
 )
 
 

@@ -153,7 +153,7 @@ def run_single(
     from app.omr.qr import read_qr
     from app.omr.anchors import find_anchors, warp_perspective
     from app.omr.bubbles import read_all_bubbles
-    from app.omr.layout import omr_grid_px
+    from app.omr.layout import omr_grid_px, warped_size_px
 
     # 2. QR o'qish
     titul_uuid = read_qr(gray)
@@ -172,7 +172,24 @@ def run_single(
         )
 
     # 4. Perspektiva to'g'rilash
-    warped_gray = warp_perspective(gray, anchor_centers, warp_w, warp_h)
+    #
+    # MUHIM: warp o'lchami grid bilan AYNAN bir koordinata fazosida bo'lishi shart.
+    # omr_grid_px() doiralarni anchor-markazlari to'rtburchagi (foydali maydon)
+    # ichida hisoblaydi, ya'ni warp anchor markazlarini (0,0)-(W,H) ga keltirishi
+    # kerak, bunda (W,H) = warped_size_px(omr_dpi). Aks holda doiralar noto'g'ri
+    # joydan o'qiladi (bo'sh<->to'ldirilgan teskari bo'lib ketadi).
+    #
+    # Shu sababli warp o'lchamini layout'dan hisoblaymiz — tashqaridan kelgan
+    # warp_w/warp_h (config) bilan grid orasida nomuvofiqlik bo'lishining oldini
+    # oladi.
+    grid_w, grid_h = warped_size_px(omr_dpi)
+    if (warp_w, warp_h) != (grid_w, grid_h):
+        log.warning(
+            "warp_w/warp_h (%dx%d) grid fazosiga (%dx%d) mos emas — "
+            "layout'dan hisoblangan o'lcham ishlatiladi.",
+            warp_w, warp_h, grid_w, grid_h,
+        )
+    warped_gray = warp_perspective(gray, anchor_centers, grid_w, grid_h)
 
     # 5. Binary (to'ldirilgan = oq)
     warped_bin = preprocess(warped_gray)
