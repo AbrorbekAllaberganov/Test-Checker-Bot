@@ -25,12 +25,12 @@ def main_menu_inline_kb(web_app_url: Optional[str] = None) -> InlineKeyboardMark
         ],
         [InlineKeyboardButton(text="ℹ️ Yordam", callback_data="menu_help")],
     ]
-    # Dashboard tugmasi — web_app_url bo'lsa Web App, bo'lmasa oddiy URL
+    # Dashboard tugmasi — callback orqali token generatsiya qilinadi
     if web_app_url:
         rows.insert(2, [
             InlineKeyboardButton(
                 text="📊 Dashboard (Web Panel)",
-                web_app=WebAppInfo(url=web_app_url)
+                callback_data="dashboard_open",
             )
         ])
     return InlineKeyboardMarkup(inline_keyboard=rows)

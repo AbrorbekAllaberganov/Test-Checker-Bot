@@ -183,13 +183,17 @@ def omr_task(self, file_path: str, chat_id: int, attempt_id: int):
     """
     OMR pipeline + baholash + DB yozish + natija yuborish.
 
+    Ikki bosqichli yondashuv:
+      1. Faqat QR o'qib titul UUID olish.
+      2. DB'dan haqiqiy qcount/vcount olib, to'liq pipeline'ni ishlatish.
+
     Args:
         file_path:  Yuklab olingan rasm/PDF yo'li.
         chat_id:    Natija yuboriladigan Telegram chat ID.
         attempt_id: Pending attempt DB ID.
     """
     from app.core.config import get_settings
-    from app.omr.pipeline import run
+    from app.omr.pipeline import run, read_qr_from_file
     from app.services.grading import grade, format_result_message
     from app.models.attempt import Attempt
     from app.models.titul import Titul
@@ -209,9 +213,50 @@ def omr_task(self, file_path: str, chat_id: int, attempt_id: int):
         attempt.status = "pending"
         db.commit()
 
-        # OMR pipeline
+        # ── 1-bosqich: Faqat QR o'qib titul UUID olish ──────────────────────────
+        log.info("Worker: QR pre-scan boshlandi. File: %s", file_path)
+        pre_uuid = read_qr_from_file(file_path)
+
+        qcount: int | None = None
+        vcount: int = 4
+
+        if pre_uuid is not None:
+            # Titul va test ma'lumotini olish
+            from sqlalchemy import select as sa_select
+            import uuid as _uuid_mod
+            try:
+                uuid_obj = _uuid_mod.UUID(pre_uuid)
+                pre_titul = db.execute(
+                    sa_select(Titul).where(Titul.uuid == uuid_obj)
+                ).scalar_one_or_none()
+                if pre_titul is not None:
+                    pre_test = db.get(Test, pre_titul.test_id)
+                    if pre_test is not None:
+                        qcount = pre_test.question_count
+                        vcount = pre_test.variant_count
+                        log.info(
+                            "Worker: QR pre-scan muvaffaqiyatli: uuid=%s, qcount=%d, vcount=%d",
+                            pre_uuid, qcount, vcount,
+                        )
+                    else:
+                        log.warning("Worker: Pre-scan: test topilmadi (titul_id=%d)", pre_titul.id)
+                else:
+                    log.warning("Worker: Pre-scan: titul DB'da topilmadi (uuid=%s)", pre_uuid)
+            except (ValueError, Exception) as e:
+                log.warning("Worker: Pre-scan DB xatosi: %s — default qcount ishlatiladi", e)
+        else:
+            log.warning("Worker: Pre-scan: QR topilmadi — to'liq pipeline xato qaytaradi")
+
+        if qcount is None:
+            log.warning("Worker: qcount aniqlanmadi, default=40 qabul qilindi")
+            qcount = 40
+
+        # ── 2-bosqich: To'liq OMR pipeline (to'g'ri qcount/vcount bilan) ────────
         debug_dir = settings.debug_output_dir if settings.omr_debug else None
-        log.info("Worker: OMR pipeline ishga tushirilmoqda. File: %s", file_path)
+        log.info(
+            "Worker: OMR pipeline ishga tushirilmoqda. File: %s, qcount=%d, vcount=%d",
+            file_path, qcount, vcount,
+        )
         results = run(
             file_path,
             fill_min=settings.fill_min,
@@ -219,6 +264,8 @@ def omr_task(self, file_path: str, chat_id: int, attempt_id: int):
             warp_w=settings.warp_w,
             warp_h=settings.warp_h,
             omr_dpi=settings.omr_dpi,
+            qcount=qcount,
+            vcount=vcount,
             omr_debug=settings.omr_debug,
             debug_out_dir=Path(debug_dir) if debug_dir else None,
         )

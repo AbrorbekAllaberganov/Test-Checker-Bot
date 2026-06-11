@@ -6,9 +6,9 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.core.config import get_settings
@@ -51,6 +51,8 @@ def create_app() -> FastAPI:
     app.mount("/static/uploads", StaticFiles(directory=str(settings.temp_dir)), name="uploads")
 
     # Routerlarni ulash
+    from app.api.routes import auth as auth_router
+    app.include_router(auth_router.router)
     app.include_router(groups.router)
     app.include_router(tests.router)
     app.include_router(tituls.router)
@@ -62,12 +64,49 @@ def create_app() -> FastAPI:
     async def health():
         return {"status": "ok"}
 
+    @app.get("/login", response_class=HTMLResponse)
+    async def login_page(error: str | None = None):
+        """Dashboard login sahifasi — foydalanuvchi bot orqali kirishi kerakligini tushuntiradi."""
+        template_path = Path(__file__).parent.parent / "templates" / "login.html"
+        if not template_path.exists():
+            bot_url = f"https://t.me/{settings.bot_username}"
+            return HTMLResponse(
+                f'<h1>Bot orqali kiring</h1><a href="{bot_url}">@{settings.bot_username}</a>',
+                status_code=200,
+            )
+        html = template_path.read_text(encoding="utf-8")
+        # Error xabarini o'rnatish
+        error_msg = ""
+        if error == "expired":
+            error_msg = "Havola muddati o'tgan. Botdan yangi havola oling."
+        elif error == "not_registered":
+            error_msg = "Siz tizimda ro'yxatdan o'tmagansiz. Avval /start buyrug'ini yuboring."
+        html = html.replace("{{BOT_USERNAME}}", settings.bot_username)
+        html = html.replace("{{ERROR_MSG}}", error_msg)
+        return HTMLResponse(html)
+
     @app.get("/dashboard", response_class=HTMLResponse)
-    async def dashboard():
+    async def dashboard(request: Request):
+        """Dashboard sahifasi — cookie tekshiriladi, yo'q bo'lsa /login ga yo'naltiriladi."""
+        from app.api.routes.auth import decode_jwt
+
+        token = request.cookies.get("dashboard_session")
+        if not token:
+            return RedirectResponse("/login", status_code=302)
+        try:
+            decode_jwt(token)
+        except ValueError:
+            return RedirectResponse("/login?error=expired", status_code=302)
+
         template_path = Path(__file__).parent.parent / "templates" / "dashboard.html"
         if not template_path.exists():
-            return HTMLResponse("<h1>Dashboard HTML shabloni topilmadi (templates/dashboard.html)</h1>", status_code=404)
+            return HTMLResponse("<h1>Dashboard HTML shabloni topilmadi</h1>", status_code=404)
         return HTMLResponse(template_path.read_text(encoding="utf-8"))
+
+    @app.get("/logout")
+    async def logout_redirect():
+        """Logout shortcut — /api/auth/logout ga yo'naltiradi."""
+        return RedirectResponse("/api/auth/logout", status_code=302)
 
     return app
 

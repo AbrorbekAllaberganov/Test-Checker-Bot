@@ -38,6 +38,9 @@ class Settings(BaseSettings):
     # ── Auth ──────────────────────────────────────────────────────────────
     admin_telegram_ids: Any = []
     internal_api_key: str = "change-me"
+    # JWT dashboard session
+    secret_key: str = "change-me-use-a-random-32-char-secret"
+    jwt_expire_days: int = 7
 
     @field_validator("admin_telegram_ids", mode="before")
     @classmethod

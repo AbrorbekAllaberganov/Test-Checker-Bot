@@ -214,6 +214,33 @@ def run_single(
     )
 
 
+def read_qr_from_file(file_path: str | Path) -> Optional[str]:
+    """
+    Faqat QR kodni o'qiydi (anchor/warp/bubble QILINMAYDI).
+
+    Bu funksiya tasks.py'da DB so'rovidan oldin titul UUID'ni olish uchun
+    ishlatiladi, shunda to'liq pipeline to'g'ri qcount/vcount bilan chaqiriladi.
+
+    Args:
+        file_path: Rasm yoki PDF fayl yo'li.
+
+    Returns:
+        Titul UUID string yoki None (QR topilmasa).
+    """
+    from app.omr.qr import read_qr
+
+    images = load_image(file_path)
+    if not images:
+        log.warning("read_qr_from_file: fayl bo'sh yoki o'qilmadi: %s", file_path)
+        return None
+
+    # Faqat birinchi sahifada QR bo'lishi kutiladi
+    titul_uuid = read_qr(images[0])
+    if titul_uuid is None:
+        log.warning("read_qr_from_file: QR topilmadi: %s", file_path)
+    return titul_uuid
+
+
 def run(
     file_path: str | Path,
     *,

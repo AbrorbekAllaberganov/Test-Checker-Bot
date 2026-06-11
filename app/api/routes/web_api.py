@@ -19,14 +19,17 @@ from app.models.test import Test
 from app.models.student import Student
 from app.models.attempt import Attempt
 from app.models.titul import Titul
+from app.models.user import User
 from app.services import history as history_svc
 from app.services.grading import grade
+from app.api.routes.auth import get_current_user
 
 log = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/web",
     tags=["web-ui"],
+    dependencies=[Depends(get_current_user)],  # Barcha endpointlar himoyalangan
 )
 
 
