@@ -12,6 +12,7 @@ from aiogram.enums import ParseMode
 from aiogram.fsm.storage.redis import RedisStorage
 
 from app.bot.handlers import groups, results, scan, start, students, tests
+from app.bot.middlewares.access import AccessMiddleware
 from app.core.config import get_settings
 from app.core.logging import setup_logging
 
@@ -33,6 +34,12 @@ async def main() -> None:
 
     # Dispatcher
     dp = Dispatcher(storage=storage)
+
+    # Middleware — handler'lardan OLDIN ro'yxatga olinishi shart.
+    # Bloklangan foydalanuvchi hech bir handler'ga yetib bormaydi.
+    access_mw = AccessMiddleware()
+    dp.message.middleware(access_mw)
+    dp.callback_query.middleware(access_mw)
 
     # Handlerlarni ro'yxatga olish (tartib muhim!)
     dp.include_router(start.router)

@@ -1,0 +1,146 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * shadcn/ui dizayn tokenlari.
+ * Yorug' va qorong'i mavzu — `<html class="dark">` orqali almashadi.
+ * Grafik ranglari (chart-1..5) ikkala mavzuda ham yetarli kontrastga ega
+ * qilib tanlangan.
+ */
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 224 71% 4%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 224 71% 4%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 224 71% 4%;
+
+    --primary: 221 83% 53%;
+    --primary-foreground: 210 20% 98%;
+
+    --secondary: 220 14% 96%;
+    --secondary-foreground: 220 9% 20%;
+
+    --muted: 220 14% 96%;
+    --muted-foreground: 220 9% 46%;
+
+    --accent: 220 14% 96%;
+    --accent-foreground: 220 9% 20%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 210 20% 98%;
+
+    --success: 142 71% 40%;
+    --success-foreground: 210 20% 98%;
+
+    --warning: 38 92% 50%;
+    --warning-foreground: 224 71% 4%;
+
+    --border: 220 13% 91%;
+    --input: 220 13% 91%;
+    --ring: 221 83% 53%;
+
+    /*
+     * Grafik ranglari — "eyeball" qilinmagan, validator bilan tekshirilgan.
+     * Kategorik slotlar (identifikatsiya uchun) qat'iy tartibda ishlatiladi
+     * va HECH QACHON aylantirilmaydi: 4-qator kerak bo'lsa "Boshqalar" ga
+     * yig'iladi. Yorug' mavzuda aqua rangi 3:1 kontrastdan past — shu sababli
+     * har bir grafikda legend + tooltip (ko'rinadigan yozuv) majburiy.
+     */
+    --series-1: #2a78d6; /* ko'k */
+    --series-2: #eb6834; /* to'q sariq */
+    --series-3: #1baf7a; /* aqua */
+
+    /*
+     * Status ranglari — mavzudan qat'i nazar o'zgarmaydi va hech qachon
+     * "4-qator" sifatida qayta ishlatilmaydi. Ular doimo yozuv bilan
+     * birga keladi (rangning o'zi ma'no tashimaydi).
+     */
+    --status-good: #0ca30c;
+    --status-warning: #fab219;
+    --status-critical: #d03b3b;
+
+    --radius: 0.6rem;
+  }
+
+  .dark {
+    --background: 224 71% 4%;
+    --foreground: 210 20% 98%;
+
+    --card: 224 50% 7%;
+    --card-foreground: 210 20% 98%;
+
+    --popover: 224 50% 7%;
+    --popover-foreground: 210 20% 98%;
+
+    --primary: 217 91% 60%;
+    --primary-foreground: 224 71% 4%;
+
+    --secondary: 215 28% 17%;
+    --secondary-foreground: 210 20% 98%;
+
+    --muted: 215 28% 17%;
+    --muted-foreground: 218 11% 65%;
+
+    --accent: 215 28% 17%;
+    --accent-foreground: 210 20% 98%;
+
+    --destructive: 0 63% 51%;
+    --destructive-foreground: 210 20% 98%;
+
+    --success: 142 69% 45%;
+    --success-foreground: 224 71% 4%;
+
+    --warning: 38 92% 55%;
+    --warning-foreground: 224 71% 4%;
+
+    --border: 215 28% 17%;
+    --input: 215 28% 17%;
+    --ring: 217 91% 60%;
+
+    /* Qorong'i mavzu uchun AYNAN shu huelar qayta qadamlangan (avtomatik
+       teskari aylantirish emas) — qorong'i fonda 3:1 dan yuqori kontrast. */
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+
+    /* Status ranglari ikkala mavzuda bir xil qoladi. */
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: 'rlig' 1, 'calt' 1;
+  }
+
+  /* Ingichka scrollbar — jadval va drawer'larda chiroyliroq ko'rinadi. */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-border;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-muted-foreground/40;
+  }
+}
+
+@layer utilities {
+  /* Doira to'ldirilganligi heatmap'i uchun — 0..1 qiymatga qarab rang. */
+  .bubble-cell {
+    @apply flex h-8 w-8 items-center justify-center rounded-full border text-xs font-medium transition-colors;
+  }
+}

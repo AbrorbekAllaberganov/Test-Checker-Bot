@@ -1,143 +1,106 @@
-# Loyiha kamchiliklari (weaknesses)
+# Loyiha zaifliklari (security / logika / bug)
 
-Tahlil sanasi: 2026-06-11. Quyidagi ro'yxat kod bazasini to'liq ko'rib chiqish asosida tuzilgan va jiddiylik darajasi bo'yicha tartiblangan.
+Tahlil sanasi: 2026-09-15. Kod bazasi to'liq ko'rib chiqildi (API, bot, worker, OMR, modellar, migratsiyalar, infra, hali commit qilinmagan admin/SaaS qatlami). Jiddiylik bo'yicha tartiblangan.
 
----
-
-## 🔴 KRITIK — darhol tuzatish kerak
-
-### 1. `.env.example` ichida haqiqiy bot tokeni git'ga commit qilingan
-`.env.example:8` da haqiqiy ko'rinishdagi Telegram bot tokeni bor (`8642853215:AAG...`) va bu fayl git tarixida saqlanadi. Repo kimga ko'rinsa, bot to'liq egallab olinishi mumkin.
-**Yechim:** Tokenni darhol BotFather orqali bekor qiling (revoke), `.env.example` ga placeholder qo'ying. Token git tarixida qolgani uchun faqat faylni o'zgartirish yetarli emas.
-
-### 2. Web dashboard API'da umuman autentifikatsiya yo'q
-Boshqa barcha routerlar `verify_internal_key` bilan himoyalangan, lekin `app/api/routes/web_api.py` routerida hech qanday himoya yo'q. Istalgan odam:
-- barcha guruhlar, o'quvchilar (F.I.Sh, telegram_id), test kalitlari (`answer_key`!) va natijalarni ko'ra oladi;
-- `POST /api/web/attempts/{id}/review` orqali **istalgan o'quvchining bahosini o'zgartira oladi**.
-
-### 3. OMR pipeline har doim 40-savollik, 4-variantlik grid bilan o'qiydi
-`app/worker/tasks.py:215` da `run()` chaqirilganda `qcount`/`vcount` berilmaydi, `app/omr/pipeline.py:184` esa default 40 savol / 4 variant qabul qiladi. QR avval o'qilsa ham, titul→test dan haqiqiy savol soni olinib pipeline'ga qaytarilmaydi. Natijada **50 va 90 savollik titullar noto'g'ri tekshiriladi** (41+ savollar o'qilmaydi, grid koordinatalari ham boshqa layoutga to'g'ri kelmaydi), 5 variantli testlarda E varianti o'qilmaydi.
-
-### 4. `titul_id=1` placeholder — yangi bazada scan oqimi butunlay ishlamaydi
-`app/bot/handlers/scan.py:55` da pending attempt `titul_id=1` bilan yaratiladi. ID=1 titul mavjud bo'lmasa FK xatosi tushadi va birorta skan ishlamaydi; mavjud bo'lsa, xato bilan tugagan attemptlar boshqa o'quvchining tituliga bog'lanib qoladi (statistika buziladi).
-
-### 5. Maxfiy fayllar autentifikatsiyasiz statik tarzda ochiq
-`app/api/main.py:49-51` — `/static/pdfs`, `/static/debug`, `/static/uploads` mountlari himoyasiz. O'quvchilarning skan qilingan varaqlari, F.I.Sh yozilgan PDF titullar va debug rasmlar URL'ni bilgan (yoki taxmin qilgan) har kimga ochiq. Fayl nomlari Telegram `file_id` (taxmin qilish qiyin), lekin web API ulardagi yo'llarni ochiq qaytaradi (2-band bilan birga to'liq ma'lumot sizib chiqadi).
-
-### 6. Docker'da Postgres, Redis, Grafana, Loki portlari tashqariga ochiq
-`docker-compose.yml`:
-- `5432:5432` va `6379:6379` — VPS'da bu Postgres (parol `omrpass` default) va **parolsiz Redis**ni butun internetga ochadi. Redis orqali Celery navbatiga zararli tasklar ham yuborilishi mumkin;
-- Grafana `admin/admin` paroli hardcode qilingan (`GF_SECURITY_ADMIN_PASSWORD=admin`), `3000` port ochiq;
-- Loki `3100` autentifikatsiyasiz ochiq — istalgan kishi log o'qiy oladi/yoza oladi;
-- Flower (`5555`) ham autentifikatsiyasiz.
-**Yechim:** portlarni faqat `127.0.0.1:` ga bind qilish yoki umuman publish qilmaslik, Redis'ga parol qo'yish.
-
-### 7. `.dockerignore` yo'q — `.env` va o'quvchi skanlari Docker image ichiga kiradi
-`Dockerfile:34` `COPY . .` butun papkani ko'chiradi: `.env` (haqiqiy tokenlar bilan), `scratch/omr_uploads/` dagi haqiqiy o'quvchi PDF skanlari, docs, git fayllari — hammasi image qatlamlariga yoziladi. Image biror registry'ga push qilinsa, sirlar tarqaydi.
+Oldingi (iyun) ro'yxatdan tuzatilganlar: bot skanida `titul_id=None` (002 migratsiya), `omr_task` da qcount/vcount QR orqali aniqlash, web API ga initData auth qo'shilgan. Qolganlari va yangi topilganlar quyida.
 
 ---
 
-## 🟠 YUQORI — xavfsizlik va to'g'rilik muammolari
+## 🔴 KRITIK
 
-### 8. Bot'da egalik (ownership) tekshiruvi yo'q joylar — IDOR
-`app/bot/handlers/groups.py:62-78` — `group:{id}` callback'ida `get_group()` ishlatiladi (`get_group_for_owner` emas). Foydalanuvchi callback data'ni soxtalashtirsa, **boshqa ustozning guruhini ochishi** (va menyu orqali o'quvchilarini, testlarini boshqarishi) mumkin. API'dagi `GET /groups/{id}`, `POST /{id}/students` ham owner tekshirmaydi.
+1. **Haqiqiy bot tokeni git tarixida va u hozir ham ishlatilmoqda.** `.env.example:8` dagi token `591d758` (first commit) dan beri repoda. `.env` dagi joriy `BOT_TOKEN` aynan shu token. Repo ko'rgan har kim botni to'liq boshqaradi. Darhol BotFather orqali revoke qiling; faylni o'zgartirish yetarli emas.
 
-### 9. Istalgan Telegram foydalanuvchisi skan yuborib natija olishi mumkin
-`scan.py` da hech qanday ro'yxatdan o'tish/rol tekshiruvi yo'q. O'quvchining o'zi ham varaqni suratga olib botga yuborsa, javob kalitiga nisbatan natijani (qaysi savollar to'g'ri/xato) ko'ra oladi — bu test sirini buzadi. `admin_telegram_ids` sozlamasi mavjud, lekin **kodda hech qayerda ishlatilmaydi**.
+2. **Web dashboard'da tenant izolyatsiyasi yo'q (IDOR).** `app/api/routes/web_api.py` barcha endpointlar `get_webapp_user` bilan himoyalangan, lekin `user` hech qayerda ishlatilmaydi. Istalgan ro'yxatdan o'tgan ustoz: barcha guruhlar (`:83`), boshqa ustozning o'quvchilari (`:109`), **javob kalitlari** (`:228`), natijalar (`:237`, `:289`) ni ko'radi va **istalgan attempt bahosini o'zgartiradi** (`:350`). `dashboard-stats` (`:47`) butun tizim statistikasini beradi.
 
-### 10. CORS hamma uchun ochiq
-`app/api/main.py:40-46` — `allow_origins=["*"]` + `allow_credentials=True` birga. Bu kombinatsiya spec bo'yicha noto'g'ri va xavfli; autentifikatsiya qo'shilganda ham CSRF-ga yo'l ochadi.
+3. **Bot callback'larida egalik tekshiruvi yo'q (IDOR).** Callback data soxtalashtirilsa boshqa ustozning ma'lumotlariga kirish/o'zgartirish mumkin: `groups.py:62-67` (`group:`), `students.py:18-23,45-49` (ro'yxat, qo'shish), `tests.py:71,100,292,314,337,363` (test yaratish, titullarni PDF/ZIP yuklab olish), `results.py:125,144,166,193,247,289,347,366,385` (natijalar, Excel eksport). `gen_tituls:all` (`tests.py:249`) FSM'dagi tekshirilmagan `test_id` bilan boshqa ustoz testiga titul generatsiya qilib PDF oladi. Faqat `del_group` va `menu_*` to'g'ri.
 
-### 11. CI/CD'da test/lint bosqichi yo'q, migratsiya tartibi noto'g'ri
-`.github/workflows/deploy.yml`:
-- push → to'g'ridan-to'g'ri deploy, testlar umuman ishga tushirilmaydi;
-- konteynerlar **avval** yangi kod bilan ko'tariladi, migratsiya **keyin** ishlaydi (51-qator) — sxema mos kelmagan oraliqda xatolar bo'ladi;
-- rollback mexanizmi yo'q, `git pull` server'dagi lokal o'zgarishlarda yiqiladi;
-- "downtimesiz" deb yozilgan, lekin `docker-compose up --build` aslida downtime beradi.
+4. **Statik fayllar autentifikatsiyasiz va taxmin qilinadigan nomlar bilan.** `app/api/main.py:49-51` — `/static/pdfs`, `/static/debug`, `/static/uploads`. PDF nomi `titul_{titul.id}_{student.id}.pdf` (`tasks.py:138-141`) — ID'lar ketma-ket, demak barcha o'quvchilar titullarini (F.I.Sh + QR) enumeratsiya qilib yuklab olish mumkin. QR'ga ega bo'lgan kishi o'quvchi nomidan soxta skan yuboradi. `/static/uploads` da o'quvchilar skanlari, `/static/debug` da annotatsiyalar.
 
-### 12. Production'da `--reload` rejimi
-`docker-compose.yml:59` — API `uvicorn ... --reload` bilan ishlaydi. Bu dev rejimi: sekin, xotira sarfi katta, fayl-watcher prod'da keraksiz. Dev/prod uchun bitta compose fayl ishlatilgan, override fayl yo'q.
+5. **Maxfiy kalitlar default qiymatda ishlashi mumkin.** `config.py:44` `internal_api_key="change-me"`, `:46` `secret_key="change-me-use-a-random-32-char-secret"`. Startup'da tekshiruv yo'q: `.env` da `SECRET_KEY` bo'lmasa admin JWT (`security.py:65`) ommaviy kalit bilan imzolanadi — istalgan kishi SUPERADMIN tokeni yasaydi.
 
-### 13. Celery task'da har safar yangi DB engine yaratiladi
-`app/worker/tasks.py:31-40` — `_get_sync_session()` har chaqiruvda `create_engine()` qiladi va engine hech qachon dispose qilinmaydi → connection pool'lar to'planib, Postgres ulanishlari tugashi mumkin. Engine module darajasida bitta bo'lishi kerak.
+6. **Docker portlari hali ham internetga ochiq.** `docker-compose.yml`: Postgres `5433` (`:29`), **parolsiz Redis** `6380` (`:41`), API `8000`, Loki `3100` (`:78`), Grafana `3001` `admin/admin` (`:88-92`) — hammasi `0.0.0.0`. Port raqamini o'zgartirish himoya emas. Redis orqali Celery navbatiga istalgan task yuboriladi, FSM state'lar o'qiladi.
 
-### 14. Xatoda retry + foydalanuvchiga takror xabar
-`omr_task` (tasks.py:323-341) istalgan istisnoda attempt'ni `error` qilib, foydalanuvchiga xabar yuborib, **keyin retry qiladi** — foydalanuvchi 2-3 marta bir xil "Xatolik yuz berdi" xabarini oladi, retry muvaffaqiyatli bo'lsa ham status chalkashadi. Doimiy xatolar (masalan, noto'g'ri UUID) retry qilinmasligi kerak.
+7. **`.dockerignore` yo'q, `.env` va `.git` image ichiga kiradi.** `Dockerfile:34` `COPY . .`; root user; dev-deps; `compose:59` prod'da `--reload`.
 
-### 15. Ko'p sahifali PDF'da faqat birinchi sahifa tekshiriladi
-`tasks.py:231` — `results[0]` olinadi, qolgan sahifalar **indamay tashlab yuboriladi**. Ustoz 30 varaqni bitta PDF qilib yuborsa, faqat 1 tasi tekshiriladi va hech qanday ogohlantirish yo'q.
+8. **Deploy tartibi noto'g'ri — 003 migratsiya uchun downtime kafolatlangan.** `deploy.yml:48-51` avval konteynerlar yangi kod bilan ko'tariladi, keyin `alembic upgrade`. Yangi `User` modeli `admin_role`, `is_blocked` ustunlarini SELECT qiladi → migratsiya tugaguncha bot ham, API ham yiqiladi. CI'da test yo'q, rollback yo'q.
 
 ---
 
-## 🟡 O'RTA — funksional va arxitektura kamchiliklari
+## 🟠 YUQORI
 
-### 16. Album "jamlama natija" va'da qilingan, lekin yo'q
-`scan.py` docstring'ida "jamlama natija" deyilgan, amalda har rasm alohida xabar yuboradi. 30 ta varaq yuborilsa, 60+ xabar keladi. Albom kollektor xotirada (`_album_collector` dict) — bot restart bo'lsa yo'qoladi, bir nechta bot instance'da ishlamaydi.
+9. **API `/attempts/scan` hali ham buzuq.** `attempts.py:62` `titul_id=1` placeholder (FK xato yoki noto'g'ri bog'lanish); `:57` fayl nomi `id(content)` — qayta ishlatiladigan qiymat, ustma-ust yozish; `:47` butun fayl o'qilib keyin hajm tekshiriladi (RAM DoS). `schemas/attempts.py:12` `titul_id: int` — pending/error attempt uchun `GET /attempts/{id}` 500 qaytaradi.
 
-### 17. Vaqtinchalik fayllar hech qachon tozalanmaydi
-Yuklab olingan skanlar (`/tmp/omr_uploads`), generatsiya qilingan PDF'lar va debug rasmlar uchun hech qanday cleanup/retention siyosati yo'q — disk asta-sekin to'ladi. Shu bilan birga `attempt.source_file` shu papkaga ishora qiladi, ya'ni fayllarni tozalash review funksiyasini sindiradi — bu bog'liqlik hal qilinmagan.
+10. **SaaS kvota/blok mantiqi hech qayerda chaqirilmaydi.** `services/subscriptions.py` dagi `consume_scan`, `check_group_limit`, `check_student_limit`, `ensure_subscription` — bot va API'da ishlatilmaydi. `scan.py:95-174` da ro'yxat/blok/kvota tekshiruvi yo'q: istalgan Telegram foydalanuvchisi (o'quvchi ham) skan yuboradi. `admin/users.py:457` "bot middleware `is_blocked` tekshiradi" deydi — bunday middleware yo'q, blok botda ishlamaydi. Yangi ustozlarga obuna yaratilmaydi (faqat 003 seed'dagilar). `last_seen_at` hech qachon yangilanmaydi.
 
-### 18. Timezone bilan ishlash noto'g'ri
-`web_api.py:53` — `datetime.now()` (naive, server lokal vaqti) `TIMESTAMPTZ` ustun bilan solishtiriladi → "bugungi skanlar" statistikasi UTC/lokal farqida noto'g'ri chiqadi. Loyihada umuman timezone strategiyasi yo'q (foydalanuvchilar O'zbekistonda, server UTC bo'lishi mumkin).
+11. **FSM handlerlari matn bo'lmagan xabarda yiqiladi.** `groups.py:95`, `students.py:70`, `tests.py:114,164` — `message.text.strip()` `F.text` filtrsiz. Holatda turib rasm/stiker yuborilsa `AttributeError`, javob yo'q, state tiqilib qoladi. Ustoz kalit kiritish holatida turib skan yuborsa ham shu.
 
-### 19. Pipeline'dagi `needs_review` mantiqiy nomuvofiq
-`pipeline.py:197-200` — kommentda "ambiguous yoki blank" deyilgan, kodda faqat `ambiguous` tekshiriladi. Blank flag'lar pipeline darajasida e'tiborsiz (grade() ichida qoplanadi, lekin ikki joyda ikki xil mantiq — chalkash).
+12. **5 variantli test aslida ishlamaydi.** `layout.py:30,37,44` `options` faqat `ABCD`; `options[:vcount]` 5 uchun ham 4 ta beradi. Bot 5 variantni tanlashga (`inline.py:100`) va kalitda `E` kiritishga ruxsat beradi, lekin PDF'da E doirasi chizilmaydi va OMR o'qimaydi → `E` javoblar doim xato.
 
-### 20. `warp_w/warp_h` qiymatlari config va .env.example'da har xil
-`config.py:62-63` default `1449x2134`, `.env.example:51-52` esa `1654x2339`. Kalibratsiya qaysi o'lchamda qilingan bo'lsa, boshqasida bubble koordinatalari suriladi. Bunday "sinxron bo'lishi shart" qiymatlar bitta manbada bo'lishi kerak.
+13. **Varaq teskari (180°) tushsa natija indamay noto'g'ri.** `anchors.py:24-45` `order_points` rasm burchaklarini oladi, fizik yo'nalishni (QR joylashuvi) tekshirmaydi → grid oynadek buriladi, hamma javob "xato". Anchor filtri (`:19-21`) piksel maydoniga bog'liq: telefon 12MP suratda doiralar/QR finder kvadratlari anchor deb olinishi yoki haqiqiy anchor `MAX_AREA` dan oshishi mumkin; 4 nuqta to'rtburchak hosil qilishi tekshirilmaydi.
 
-### 21. Race condition: parallel skanlar va album timeout'i
-`ALBUM_TIMEOUT = 3.0` — sekin internetda albom rasmlari 3 soniyadan kechiksa, albom bo'linib ketadi. `_album_collector` global dict — bir foydalanuvchi spam qilsa xotira o'sadi, eski yozuvlar tozalanmaydi (faqat muvaffaqiyatli yo'lda `pop` qilinadi).
+14. **Worker resurs DoS.** `tasks.py:218` va `:260` faylni ikki marta to'liq yuklaydi (`read_qr_from_file` PDF ning **barcha** sahifalarini rasterizatsiya qiladi, faqat 0-sahifa kerak). 20 MB ichida yuzlab sahifali PDF yoki decompression-bomb PNG → worker OOM. `celery_app.py` da `task_time_limit`/`soft_time_limit` yo'q: `acks_late=True` bilan osilgan task 1 soatdan keyin qayta yetkaziladi (dublikat). `tasks.py:31-40` har taskda yangi engine.
 
-### 22. Rate limiting / flood himoyasi yo'q
-Bot ham, API ham cheklovsiz. Bitta foydalanuvchi yuzlab rasm yuborib Celery navbatini va diskni to'ldira oladi. Photo handler'da hajm tekshiruvi ham yo'q (document'da bor, photo'da yo'q).
+15. **`omr_task` xato oqimi.** `tasks.py:370-388` istalgan xatoda foydalanuvchiga xabar yuborib **keyin** retry — 3 marta bir xil xabar; doimiy xatolar ham retry. `bubble_data`/`confidence` (003 ustunlari) attempt'ga yozilmaydi (`:330-341`) → admin OMR inspektori bo'sh bo'ladi.
 
-### 23. Migratsiya bilan modellarning sinxronligi kafolatlanmagan
-Bitta `001_initial.py` migratsiya bor; model o'zgarishlari uchun autogenerate jarayoni yo'lga qo'yilmagan. `attempts.titul_id` `NOT NULL` — placeholder muammosining (4-band) ildizi shu sxemada: skan kelganda titul hali noma'lum bo'lishi tabiiy holat, ustun nullable bo'lishi kerak edi.
+16. **Telegram HTML injection.** `parse_mode=HTML` bilan escape qilinmagan foydalanuvchi matni: `grading.py:99-100`, `groups.py:74,114`, `tests.py:124,229,304`, `results.py:137,181,282`, `start.py:63`, `tasks.py:170`, `admin/users.py:502` (blok sababi). `<b>` yoki `<` kiritilsa Telegram "can't parse entities" → handler yiqiladi.
 
-### 24. Test qamrovi juda past
-`app/tests/` — faqat grade, key parse, layout va web_api uchun minimal testlar. Eng murakkab va xatoga moyil qismlar: `scan.py` oqimi, `omr_task`, anchors/warp, bot FSM handlerlari — umuman testlanmagan. CI'da testlar ishlatilmagani uchun mavjudlari ham himoya bermaydi.
+17. **Excel/CSV formula injection.** `excel.py:136-146` va `history.py:168-177` — `=`, `+`, `-`, `@` bilan boshlangan F.I.Sh/test nomi hujayraga to'g'ridan-to'g'ri yoziladi. `results.py:358,377,396` fayl nomlari sanitizatsiyasiz (`/`, `"`).
 
-### 25. `get_db` dependency har so'rovda avtomatik commit qiladi
-`app/core/db.py:57-66` — GET so'rovlarda ham commit, xatosiz tugagan har qanday handler o'zgarishni saqlaydi. Read-only endpointlar uchun ortiqcha; tranzaksiya chegaralarini service qatlamida nazorat qilish to'g'riroq.
+18. **Obuna muddati hech qachon tugamaydi.** `subscriptions.py:130-144` `get_active_subscription` `ends_at` ni tekshirmaydi, statusni `expired` ga o'tkazadigan joy yo'q → to'lov muddati o'tgan tarif cheksiz ishlaydi. `:86-91` `_next_period_end` kunni 28 ga qisqartiradi — davr har oy oldinga siljiydi. `:384` tarif almashganda `scans_used` ko'chib o'tadi.
+
+19. **Admin OTP oqimi.** `admin/auth.py:160-168` — `retry_after` faqat admin ID uchun qaytadi → admin telegram_id'larini enumeratsiya qilish mumkin. IP bo'yicha limit yo'q → har adminga 60 s da bitta OTP spam. `audit.py:33-40` `X-Forwarded-For` ko'r-ko'rona ishoniladi (soxtalash). `admin/auth.py:302-335` refresh "rotatsiya" deyilgan, lekin eski refresh token bekor qilinmaydi, logout yo'q — 14 kun ichida sizib chiqqan token to'liq ishlaydi.
+
+20. **initData replay.** `routes/auth.py:36` `_INIT_DATA_MAX_AGE = 0` — bir marta tutib olingan `initData` abadiy amal qiladi (`/api/web/*` ham, `/api/admin/auth/telegram` ham).
+
+21. **CORS `*` + `allow_credentials=True`** (`main.py:40-46`), `/docs` va `/redoc` prod'da ochiq (`:36-37`).
+
+22. **Telegram flood limitlari.** `tests.py:276-279` har o'quvchi uchun alohida `pdf_task` + `send_document` (150 o'quvchi = 150 xabar), `tasks.py:84-91` `RetryAfter` faqat log qilinadi → ba'zi PDF'lar indamay yetib bormaydi. `tests.py:377-388` ZIP xotirada, 50 MB dan oshsa yuborilmaydi.
 
 ---
 
-## 🟢 PAST — sifat va texnik qarz
+## 🟡 O'RTA
 
-### 26. Dockerfile optimallashtirilmagan
-- Multi-stage build yo'q: `gcc`, `python3-dev` va dev-dependencylar (`pip install -e ".[dev]"` — pytest, factory-boy) production image'da qoladi;
-- Konteyner **root** foydalanuvchisida ishlaydi;
-- `HEALTHCHECK` yo'q.
+23. **Ko'p sahifali PDF'da faqat 1-sahifa tekshiriladi** (`tasks.py:278`), ogohlantirish yo'q.
 
-### 27. `scratch/` papkasi va binar fayllar repoda
-Debug skriptlar, kalibratsiya rasmlari, real o'quvchi skanlari (`scratch/omr_uploads/*.pdf` — lokal, lekin `scratch/*.png/jpg` git'da) repo og'irligini oshiradi va chalkashlik tug'diradi. `docs/sample_titul_*.pdf` `.gitignore`dagi `*.pdf` qoidasiga zid ravishda tracked.
+24. **Qo'lda tuzatish nomuvofiq.** `attempts.py:101-106` `score` ni yangilab `percent`/`detail` ni qayta hisoblamaydi. `web_api.py:373-382` `corrected_answers` variant soniga tekshirilmaydi, `manual_override`/`reviewed_by_id`/`reviewed_at` to'ldirilmaydi.
 
-### 28. `attempts` jadvalida `chat_id` saqlanmaydi
-Natija kimga yuborilgani DB'da yo'q — keyinchalik qayta yuborish/audit qilib bo'lmaydi. Shuningdek attempt'da `user_id` yo'q — skanlarni kim yuborganini bilish imkonsiz.
+25. **O'lik/tugallanmagan UI.** `inline.py:152` `results:{test_id}` tugmasi uchun handler yo'q (aylanib turadi). `results.py:51` reply-keyboard matni hech qachon kelmaydi (`reply.py` ishlatilmaydi). `students.py:137` `link_telegram` chaqirilmaydi — dashboard doim "Ulanmagan".
 
-### 29. Loki handler'dagi cheksiz navbat va yo'qotilgan loglar
-`app/core/logging.py` — `queue.Queue` chegarasiz (Loki uzoq yotsa xotira o'sadi), xatoda log yozuvi yo'qoladi, graceful shutdown yo'q (daemon thread navbatdagi loglarni tashlab ketadi).
+26. **Foydalanuvchi ma'lumoti eskiradi.** `services/groups.py:16-31` ikkinchi `/start` da ism/username yangilanmaydi; callback orqali yaratilgan userlar `full_name=NULL`.
 
-### 30. HTML-injection xavfi xabarlarda
-Bot xabarlari `ParseMode.HTML` bilan yuboriladi va `student.full_name`, `test.title`, `group.name` kabi foydalanuvchi kiritgan matnlar escape qilinmasdan qo'shiladi (`grading.py:format_result_message`, handlerlar). `<b>` kabi teglar kiritilsa xabar buziladi yoki Telegram xato qaytaradi.
+27. **`parse_key` takror raqamlarni indamay ustidan yozadi** (`services/tests.py:55-65`): "1-A 1-B 2-C" 2 savolli test uchun qabul qilinadi.
 
-### 31. README/docs bilan kod o'rtasida nomuvofiqliklar
-Docs'da tasvirlangan oqimlar (masalan, album jamlama, qcount aniqlash) kodda to'liq amalga oshmagan. `CLAUDE.md` yo'q. `.env.example`dagi izoh "BARCHA maydonlarni to'ldiring" deydi, lekin haqiqiy qiymatlar bilan kelgan.
+28. **Timezone.** `web_api.py:56` naive `datetime.now()`; Celery `Asia/Tashkent` (`celery_app.py:24`), ilova UTC. "Bugungi skanlar" O'zbekiston kuni bo'yicha noto'g'ri.
 
-### 32. Monitoring/alerting amaliy emas
-Loki+Grafana bor-u, lekin metrikalar (navbat uzunligi, OMR muvaffaqiyat foizi, xato darajasi) yig'ilmaydi, alert yo'q. Faqat deploy haqida Telegram xabari bor.
+29. **`get_db` har GET'da ham commit qiladi** (`db.py:57-66`).
 
-### 33. Backup strategiyasi yo'q
-Postgres ma'lumotlari (barcha guruh/test/natijalar) uchun hech qanday zaxira mexanizmi yo'q — `pg_data` volume yo'qolsa, hamma narsa yo'qoladi.
+30. **Skan qabul qilish nozikliklari.** `scan.py:26-28` albom kollektori xotirada (restart'da yo'qoladi, 3 s timeout); `:41` fayl nomi `file_id` — bir xil rasm qayta yuborilsa worker o'qiyotgan fayl ustidan yoziladi; `image/heic` qabul qilinadi, lekin OpenCV o'qiy olmaydi; vaqtinchalik fayllar hech qachon tozalanmaydi (review ularga bog'liq).
+
+31. **Loki handler** (`logging.py:14,54-57`): chegarasiz navbat, Loki yotsa har yozuv 3 s ushlanadi → xotira o'sadi.
+
+32. **Celery natijalari ishlatilmaydi, lekin 24 soat Redis'da saqlanadi** (`celery_app.py:15,30`) — `ignore_result=True` kerak.
+
+33. **`fill_ratio` har doira uchun to'liq kadr niqob yaratadi** (`bubbles.py:39-41`), 360 doira × 1449×2134 → sekin.
+
+34. **Testlar haqiqiy bazaga yozadi/o'chiradi** (`test_web_api.py:24-31,150-167`), izolyatsiya yo'q; prod `.env` bilan ishga tushirilsa ma'lumot buziladi.
+
+35. **Admin API hali yarim.** `api/admin/__init__.py:8` `router` moduli, `admin/users.py:256` `admin_export` — endi yaratilmoqda; `main.py` ga ulanmagan. `users.py:118` `ilike` da `%`/`_` escape qilinmagan.
+
+36. **Docs/kod nomuvofiqligi.** `.env.example` "hammasini to'ldiring" deydi-yu, haqiqiy qiymatlar bilan keladi; `docs/06_API.md` yo'llari koddan farq qiladi; o'quvchi oqimlari hujjatda bor, kodda yo'q.
 
 ---
 
-## Tavsiya etiladigan birinchi qadamlar (tartib bilan)
+## 🟢 PAST
 
-1. Bot tokenini revoke qilish va `.env.example`ni tozalash (№1).
-2. `web_api` routeriga autentifikatsiya qo'shish yoki Telegram WebApp `initData` tekshiruvini joriy qilish (№2, №5).
-3. `omr_task`da titul→test orqali `qcount`/`vcount`ni aniqlab pipeline'ni qayta chaqirish (№3).
-4. `attempts.titul_id`ni nullable qilish va placeholder'ni olib tashlash (№4).
-5. Docker portlarini yopish, Redis'ga parol, `.dockerignore` qo'shish (№6, №7).
-6. CI'ga test bosqichi qo'shish (№11, №24).
+37. Dockerfile: multi-stage yo'q, `HEALTHCHECK` yo'q; `scratch/*.png|jpg` (real skan) git'da; `attempts` da `user_id`/`chat_id` yo'q (kim yuborgani noma'lum); backup strategiyasi yo'q; metrik/alert yo'q; `verify_internal_key` doimiy vaqtli solishtirmaydi.
+
+---
+
+## Birinchi qadamlar (tartib bilan)
+
+1. Bot tokenini revoke qilish, `.env.example` ni tozalash, `SECRET_KEY`/`INTERNAL_API_KEY` default bo'lsa startup'da yiqilish (№1, №5).
+2. `web_api.py` da har so'rovni `user.id` bo'yicha filtrlash; bot callback'larida `get_group_for_owner` orqali egalik tekshiruvi (№2, №3).
+3. Statik mountlarni olib tashlab, fayllarni auth'li endpoint orqali berish; PDF nomiga UUID (№4).
+4. Compose portlarini `127.0.0.1:` ga bog'lash, Redis parol, `.dockerignore`, `--reload` ni olib tashlash (№6, №7).
+5. Deploy'da migratsiyani konteynerlardan **oldin** ishga tushirish, CI'ga pytest (№8).
+6. Skan oqimiga ro'yxat/blok/kvota tekshiruvi va bot middleware (№10); FSM handlerlarga `F.text` (№11); 5 variantni layout'ga qo'shish yoki tanlovdan olib tashlash (№12).

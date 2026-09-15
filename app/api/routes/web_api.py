@@ -53,7 +53,11 @@ async def get_dashboard_stats(db: AsyncSession = Depends(get_db)):
     attempts_count = (await db.execute(select(func.count(Attempt.id)))).scalar() or 0
 
     # Bugungi urinishlar (kun boshi)
-    today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    # created_at ustuni TIMESTAMPTZ — solishtirish uchun tz-aware qiymat kerak,
+    # aks holda asyncpg "naive va aware datetime" xatosini beradi.
+    today_start = datetime.now(timezone.utc).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
     scans_today = (await db.execute(
         select(func.count(Attempt.id)).where(Attempt.created_at >= today_start)
     )).scalar() or 0

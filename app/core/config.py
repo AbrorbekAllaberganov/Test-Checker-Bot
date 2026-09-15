@@ -53,6 +53,33 @@ class Settings(BaseSettings):
             return [int(i.strip()) for i in v.split(",") if i.strip()]
         return list(v) if v else []
 
+    # ── Admin panel (React) ───────────────────────────────────────────────
+    # Access token qisqa, refresh uzoq — brauzer sessiyasi uchun.
+    admin_access_token_minutes: int = 30
+    admin_refresh_token_days: int = 14
+    # Bot yuboradigan bir martalik kod (OTP) amal qilish muddati.
+    admin_otp_ttl_seconds: int = 300
+    # Bitta telegram_id uchun OTP so'rashlar orasidagi minimal interval.
+    admin_otp_resend_seconds: int = 60
+    # React dev-server origin'lari (vergul bilan). Bo'sh bo'lsa faqat
+    # same-origin ishlaydi — prod'da panel API bilan bir domenda turadi.
+    admin_cors_origins: Any = []
+
+    @field_validator("admin_cors_origins", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, v: object) -> list[str]:
+        if isinstance(v, str):
+            return [o.strip() for o in v.split(",") if o.strip()]
+        return list(v) if v else []
+
+    # ── SaaS kvota ────────────────────────────────────────────────────────
+    # false bo'lsa limitlar hisoblanadi, lekin skan bloklanmaydi (soft-launch).
+    enforce_quota: bool = False
+    # Yangi ro'yxatdan o'tgan ustozga beriladigan tarif.
+    default_plan_code: str = "FREE"
+    # Yangi obuna necha kun 'trial' bo'ladi (0 = darrov 'active').
+    trial_days: int = 0
+
     # ── File paths ────────────────────────────────────────────────────────
     pdf_output_dir: Path = Path("/data/pdfs")
     debug_output_dir: Path = Path("/data/debug")

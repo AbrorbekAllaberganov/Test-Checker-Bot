@@ -19,7 +19,7 @@ import uuid as _uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import BigInteger, ForeignKey, Index, Text, UniqueConstraint, func
+from sqlalchemy import TIMESTAMP, BigInteger, ForeignKey, Index, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -48,7 +48,7 @@ class Titul(Base):
     )
     pdf_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        nullable=False, server_default=func.now()
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
     )
 
     # Relationships

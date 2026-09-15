@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, CheckConstraint, ForeignKey, Index, Integer, Text, func
+from sqlalchemy import TIMESTAMP, BigInteger, CheckConstraint, ForeignKey, Index, Integer, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -41,7 +41,7 @@ class Test(Base):
     variant_count: Mapped[int] = mapped_column(Integer, nullable=False, default=4)
     answer_key: Mapped[dict] = mapped_column(JSONB, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
-        nullable=False, server_default=func.now()
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
     )
 
     # Relationships

@@ -13,7 +13,7 @@ celery_app = Celery(
     "omr_worker",
     broker=settings.redis_url,
     backend=settings.redis_url,
-    include=["app.worker.tasks"],
+    include=["app.worker.tasks", "app.worker.broadcast_tasks"],
 )
 
 celery_app.conf.update(

@@ -340,6 +340,19 @@ def omr_task(self, file_path: str, chat_id: int, attempt_id: int):
         attempt.status = "done"
         attempt.source_file = file_path
 
+        # Admin inspektori uchun: doira o'lchovlarini va o'rtacha ishonchlilikni
+        # saqlaymiz (003 migratsiyasi). Busiz panelda faqat yakuniy javob
+        # ko'rinardi — nima uchun aynan shu javob tanlangani noma'lum qolardi.
+        attempt.bubble_data = res.bubble_data or None
+        if res.bubble_data:
+            confidences = [
+                bd.get("conf")
+                for bd in res.bubble_data.values()
+                if isinstance(bd.get("conf"), (int, float))
+            ]
+            if confidences:
+                attempt.confidence = round(sum(confidences) / len(confidences), 4)
+
         # Debug rasm
         if settings.omr_debug:
             debug_files = list(

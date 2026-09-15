@@ -16,7 +16,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import BigInteger, ForeignKey, Index, Text, func
+from sqlalchemy import TIMESTAMP, BigInteger, ForeignKey, Index, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base
@@ -33,7 +33,7 @@ class Student(Base):
     full_name: Mapped[str] = mapped_column(Text, nullable=False)
     telegram_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        nullable=False, server_default=func.now()
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
     )
 
     # Relationships

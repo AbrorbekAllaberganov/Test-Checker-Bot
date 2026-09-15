@@ -15,7 +15,13 @@ DDL:
         debug_file   TEXT,
         status       TEXT NOT NULL DEFAULT 'done',
         error_msg    TEXT,
-        created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+        created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+        -- 003: OMR inspektor va qo'lda tuzatish uchun
+        confidence      NUMERIC(5,4),   -- 0..1, o'rtacha doira ishonchliligi
+        bubble_data     JSONB,          -- {"1": {"ratios": {...}, "conf": .., "flag": ..}}
+        manual_override BOOLEAN NOT NULL DEFAULT false,
+        reviewed_by_id  BIGINT REFERENCES users(id) ON DELETE SET NULL,
+        reviewed_at     TIMESTAMPTZ
     );
     CREATE INDEX idx_attempts_titul   ON attempts(titul_id);
     CREATE INDEX idx_attempts_created ON attempts(created_at);
@@ -25,7 +31,17 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import BigInteger, Boolean, ForeignKey, Index, Integer, Numeric, Text, func
+from sqlalchemy import (
+    TIMESTAMP,
+    BigInteger,
+    Boolean,
+    ForeignKey,
+    Index,
+    Integer,
+    Numeric,
+    Text,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -37,6 +53,9 @@ class Attempt(Base):
     __table_args__ = (
         Index("idx_attempts_titul", "titul_id"),
         Index("idx_attempts_created", "created_at"),
+        # Admin panel: status/review bo'yicha filtr + sana bo'yicha tartib.
+        Index("idx_attempts_status_created", "status", "created_at"),
+        Index("idx_attempts_needs_review", "needs_review", "created_at"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
@@ -56,11 +75,32 @@ class Attempt(Base):
     status: Mapped[str] = mapped_column(Text, nullable=False, default="done")
     error_msg: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        nullable=False, server_default=func.now()
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    # ── OMR inspektori uchun (003) ───────────────────────────────────────
+    # O'rtacha tanlov ishonchliligi (0..1). Pipeline'dagi decide_answer()
+    # qaytargan `conf` qiymatlarining o'rtachasi; eski qatorlarda NULL.
+    confidence: Mapped[Optional[float]] = mapped_column(Numeric(5, 4), nullable=True)
+    # Har savol uchun to'liq fill_ratio/flag ma'lumoti — heatmap chizish uchun.
+    bubble_data: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+
+    # ── Qo'lda tuzatish (review queue) ───────────────────────────────────
+    manual_override: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    reviewed_by_id: Mapped[Optional[int]] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
     )
 
     # Relationships
     titul: Mapped["Titul"] = relationship("Titul", back_populates="attempts")  # type: ignore[name-defined]
+    reviewed_by: Mapped[Optional["User"]] = relationship(  # type: ignore[name-defined]
+        "User", foreign_keys=[reviewed_by_id]
+    )
 
     def __repr__(self) -> str:
         return f"<Attempt id={self.id} titul={self.titul_id} score={self.score}/{self.total}>"

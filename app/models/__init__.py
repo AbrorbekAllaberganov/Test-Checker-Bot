@@ -6,4 +6,22 @@ from app.models.test import Test
 from app.models.titul import Titul
 from app.models.attempt import Attempt
 
-__all__ = ["User", "Group", "Student", "Test", "Titul", "Attempt"]
+# ── SaaS / Admin panel (003) ────────────────────────────────────────────
+from app.models.plan import Plan
+from app.models.subscription import Subscription
+from app.models.audit_log import AuditLog
+from app.models.broadcast import Broadcast, BroadcastRecipient
+
+__all__ = [
+    "User",
+    "Group",
+    "Student",
+    "Test",
+    "Titul",
+    "Attempt",
+    "Plan",
+    "Subscription",
+    "AuditLog",
+    "Broadcast",
+    "BroadcastRecipient",
+]

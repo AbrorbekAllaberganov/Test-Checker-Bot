@@ -1,0 +1,12 @@
+# Docker build kontekstidan chiqariladigan narsalar.
+# admin-ui/node_modules juda katta — u image ichida qaytadan o'rnatiladi.
+admin-ui/node_modules
+admin-ui/dist
+.git
+__pycache__
+*.py[cod]
+.pytest_cache
+.venv
+scratch
+*.log
+calibration_*.png

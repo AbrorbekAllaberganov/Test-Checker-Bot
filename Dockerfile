@@ -1,3 +1,27 @@
+# ──────────────────────────────────────────────────────────────────────
+# 1-bosqich: React admin panelini yig'ish
+#
+# Panel FastAPI tomonidan `/admin` manzilida statik fayl sifatida
+# beriladi (app/api/main.py: _mount_admin_spa), shu sababli uni shu
+# yerda yig'ib, tayyor `dist` ni yakuniy image'ga ko'chiramiz.
+# Node runtime yakuniy image'ga TUSHMAYDI.
+# ──────────────────────────────────────────────────────────────────────
+FROM node:22-slim AS admin-ui-builder
+
+WORKDIR /ui
+
+# Avval faqat manifest — bog'liqliklar kesh qatlamida qoladi va
+# manbani o'zgartirganda qaytadan o'rnatilmaydi.
+COPY admin-ui/package.json admin-ui/package-lock.json* ./
+RUN npm install --no-audit --no-fund
+
+COPY admin-ui/ ./
+RUN npm run build
+
+
+# ──────────────────────────────────────────────────────────────────────
+# 2-bosqich: Python ilovasi (API / bot / worker uchun umumiy)
+# ──────────────────────────────────────────────────────────────────────
 FROM python:3.11-slim AS base
 
 # System dependencies
@@ -32,6 +56,9 @@ RUN pip install --no-cache-dir -e ".[dev]"
 
 # Copy source
 COPY . .
+
+# Yig'ilgan admin panel (1-bosqichdan)
+COPY --from=admin-ui-builder /ui/dist ./admin-ui/dist
 
 # Create data directories
 RUN mkdir -p /data/pdfs /data/debug /tmp/omr_uploads

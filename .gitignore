@@ -9,3 +9,9 @@ __pycache__/
 /tmp/
 *.pdf
 calibration_*.png
+
+# Admin panel (React / Vite)
+admin-ui/node_modules/
+admin-ui/dist/
+admin-ui/.env.local
+admin-ui/.env

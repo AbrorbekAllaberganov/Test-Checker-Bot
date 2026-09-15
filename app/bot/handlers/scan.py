@@ -18,6 +18,7 @@ from aiogram.types import Message
 from app.core.config import get_settings
 from app.core.db import get_session_factory
 from app.models.attempt import Attempt
+from app.services.subscriptions import QuotaExceeded
 
 log = logging.getLogger(__name__)
 router = Router(name="scan")
@@ -45,12 +46,59 @@ async def _download_file(bot: Bot, file_id: str, dest_dir: Path, suffix: str) ->
     return str(out)
 
 
+async def _check_quota(chat_id: int, db_factory) -> str | None:
+    """
+    Skan boshlashdan oldin tarif kvotasini tekshiradi.
+
+    Returns:
+        None — ruxsat bor; aks holda foydalanuvchiga ko'rsatiladigan xabar.
+    """
+    from sqlalchemy import select
+
+    from app.models.user import User
+    from app.services import subscriptions as subs_svc
+
+    async with db_factory() as db:
+        user = (
+            await db.execute(select(User).where(User.telegram_id == chat_id))
+        ).scalar_one_or_none()
+        if user is None:
+            # Ro'yxatdan o'tmagan — kvota tekshiruvi ma'nosiz, quyida
+            # OMR oqimi o'zi xato qaytaradi.
+            return None
+
+        allowed, reason = await subs_svc.check_scan_allowed(db, user.id)
+        await db.commit()  # ensure_period() davrni yangilagan bo'lishi mumkin
+
+        if not allowed and get_settings().enforce_quota:
+            return (
+                f"🚫 <b>Limit tugadi</b>\n\n{reason}\n\n"
+                "Tarifni yangilash uchun qo'llab-quvvatlash xizmatiga murojaat qiling."
+            )
+    return None
+
+
 async def _enqueue_scan(file_path: str, chat_id: int, db_factory) -> str:
-    """Pending attempt + Celery task."""
+    """Pending attempt + Celery task (kvota hisobini oshiradi)."""
+    from sqlalchemy import select
+
+    from app.models.user import User
+    from app.services import subscriptions as subs_svc
     from app.worker.tasks import omr_task
 
     log.info("Bot: Urinish (Attempt) yaratilmoqda. File: %s, Chat ID: %d", file_path, chat_id)
     async with db_factory() as db:
+        # Kvota hisobi — skan navbatga qo'yilgani uchun olinadi (natijadan
+        # qat'i nazar), aks holda xato bergan skanlarni cheksiz qayta
+        # yuborish mumkin bo'lib qolardi.
+        owner = (
+            await db.execute(select(User).where(User.telegram_id == chat_id))
+        ).scalar_one_or_none()
+        if owner is not None:
+            # QuotaExceeded faqat ENFORCE_QUOTA=true bo'lganda ko'tariladi va
+            # chaqiruvchi handler uni foydalanuvchiga xabar qilib beradi.
+            await subs_svc.consume_scan(db, owner.id)
+
         pending = Attempt(
             titul_id=None,  # hali noma'lum — worker QR ni o'qib to'ldiradi
             detected={},
@@ -86,8 +134,20 @@ async def _process_album(chat_id: int, media_group_id: str, bot: Bot) -> None:
         f"⏳ {len(paths)} ta varaq tekshirilmoqda..."
     )
     factory = get_session_factory()
+    queued = 0
     for fp in paths:
-        await _enqueue_scan(fp, chat_id, factory)
+        try:
+            await _enqueue_scan(fp, chat_id, factory)
+            queued += 1
+        except QuotaExceeded as exc:
+            # Limit albom o'rtasida tugadi — qolganlari navbatga qo'yilmaydi.
+            await bot.send_message(
+                chat_id,
+                f"🚫 <b>Limit tugadi.</b> {queued} ta varaq qabul qilindi, "
+                f"qolgan {len(paths) - queued} tasi tekshirilmadi.\n\n{exc}",
+                parse_mode="HTML",
+            )
+            return
 
 
 # ─── Photo handler ───────────────────────────────────────────────────────────
@@ -117,12 +177,22 @@ async def handle_photo(message: Message, bot: Bot) -> None:
         return
 
     # Yakka rasm
+    quota_error = await _check_quota(message.chat.id, get_session_factory())
+    if quota_error:
+        await message.answer(quota_error, parse_mode="HTML")
+        return
+
     file_path = await _download_file(
         bot, photo.file_id, settings.temp_dir, ".jpg"
     )
     await message.answer("⏳ Tekshirilmoqda...")
     factory = get_session_factory()
-    await _enqueue_scan(file_path, message.chat.id, factory)
+    try:
+        await _enqueue_scan(file_path, message.chat.id, factory)
+    except QuotaExceeded as exc:
+        await message.answer(
+            f"🚫 <b>Limit tugadi.</b>\n\n{exc}", parse_mode="HTML"
+        )
 
 
 # ─── Document handler (rasm yoki PDF) ────────────────────────────────────────
@@ -166,9 +236,19 @@ async def handle_document(message: Message, bot: Bot) -> None:
             _album_tasks[message.media_group_id] = task
         return
 
+    quota_error = await _check_quota(message.chat.id, get_session_factory())
+    if quota_error:
+        await message.answer(quota_error, parse_mode="HTML")
+        return
+
     file_path = await _download_file(
         bot, doc.file_id, settings.temp_dir, suffix
     )
     await message.answer("⏳ Tekshirilmoqda...")
     factory = get_session_factory()
-    await _enqueue_scan(file_path, message.chat.id, factory)
+    try:
+        await _enqueue_scan(file_path, message.chat.id, factory)
+    except QuotaExceeded as exc:
+        await message.answer(
+            f"🚫 <b>Limit tugadi.</b>\n\n{exc}", parse_mode="HTML"
+        )
