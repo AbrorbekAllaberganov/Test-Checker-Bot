@@ -95,6 +95,46 @@ def _send_document_sync(chat_id: int, file_path: str, caption: str = "") -> None
     asyncio.run(_send())
 
 
+def _chat_owns_test(db, test_id: int, chat_id: int) -> bool:
+    """
+    Skan yuborgan chat (ustoz) aynan shu testning egasimi?
+
+    Zanjir: Test → Group.owner_id → User.telegram_id == chat_id.
+    Bu tekshiruvsiz QR nusxasiga ega istalgan kishi (o'quvchi ham) begona
+    ustozning varag'ini skan qilib natijani olishi va `attempts` ga yozishi
+    mumkin edi (weaknesses.md №4, №10).
+    """
+    from sqlalchemy import select as sa_select
+
+    from app.models.group import Group
+    from app.models.test import Test
+    from app.models.user import User
+
+    owner_tg = db.execute(
+        sa_select(User.telegram_id)
+        .join(Group, Group.owner_id == User.id)
+        .join(Test, Test.group_id == Group.id)
+        .where(Test.id == test_id)
+    ).scalar_one_or_none()
+    return owner_tg is not None and int(owner_tg) == int(chat_id)
+
+
+def _reject_foreign_titul(db, attempt, chat_id: int) -> None:
+    """Begona titul: attempt → error, foydalanuvchiga qisqa xabar."""
+    log.warning(
+        "Worker: begona titul rad etildi: attempt_id=%d chat_id=%d", attempt.id, chat_id
+    )
+    attempt.status = "error"
+    attempt.error_msg = "Titul boshqa ustozga tegishli"
+    attempt.detected = {}
+    db.commit()
+    _send_message_sync(
+        chat_id,
+        "❌ Bu varaq sizning testingizga tegishli emas. "
+        "Faqat o'zingiz yaratgan test titullarini yuboring.",
+    )
+
+
 @celery_app.task(bind=True, name="pdf_task", max_retries=3)
 def pdf_task(self, titul_id: int, notify_chat_id: int | None = None):
     """
@@ -134,11 +174,11 @@ def pdf_task(self, titul_id: int, notify_chat_id: int | None = None):
         qr_uri = make_qr_data_uri(str(titul.uuid))
         log.info("Worker: QR data URI yaratildi.")
 
-        # PDF fayl yo'li
-        out_path = (
-            settings.pdf_output_dir
-            / f"titul_{titul.id}_{student.id}.pdf"
-        )
+        # PDF fayl yo'li. Nomda UUID — ketma-ket ID emas: ilgari
+        # `titul_{id}_{student_id}.pdf` bo'lib, /static orqali barcha
+        # titullarni enumeratsiya qilish mumkin edi (weaknesses.md №4).
+        # /static mount olib tashlangan, lekin nom ham taxmin qilinmasin.
+        out_path = settings.pdf_output_dir / f"titul_{titul.uuid}.pdf"
         log.info("Worker: PDF yo'li belgilandi: %s", out_path)
 
         # PDF render
@@ -164,10 +204,12 @@ def pdf_task(self, titul_id: int, notify_chat_id: int | None = None):
         # Xabar yuborish
         if notify_chat_id:
             log.info("Worker: Bot orqali titul yuborilmoqda, chat_id=%d", notify_chat_id)
+            from app.services.telegram import escape
+
             _send_document_sync(
                 notify_chat_id,
                 str(out_path),
-                caption=f"📄 {student.full_name} — {test.title}",
+                caption=f"📄 {escape(student.full_name)} — {escape(test.title)}",
             )
 
     except Exception as exc:
@@ -232,6 +274,13 @@ def omr_task(self, file_path: str, chat_id: int, attempt_id: int):
                 if pre_titul is not None:
                     pre_test = db.get(Test, pre_titul.test_id)
                     if pre_test is not None:
+                        # EGALIK: varaq shu chatdagi ustozning testigami?
+                        # OMR'dan OLDIN tekshiramiz — begona varaq uchun CPU
+                        # sarflanmaydi. (Pastda, to'liq pipeline'dan keyin
+                        # ham qayta tekshiriladi — ikki qatlam.)
+                        if not _chat_owns_test(db, pre_test.id, chat_id):
+                            _reject_foreign_titul(db, attempt, chat_id)
+                            return
                         qcount = pre_test.question_count
                         vcount = pre_test.variant_count
                         log.info(
@@ -326,6 +375,12 @@ def omr_task(self, file_path: str, chat_id: int, attempt_id: int):
         test = db.get(Test, titul.test_id)
         student = db.get(Student, titul.student_id)
 
+        # EGALIK (ikkinchi qatlam): pre-scan QR o'qilmagan yoki DB xatosi
+        # bilan o'tib ketgan bo'lsa ham, natija faqat test egasiga boradi.
+        if test is None or not _chat_owns_test(db, test.id, chat_id):
+            _reject_foreign_titul(db, attempt, chat_id)
+            return
+
         # Baholash
         gr = grade(res.detected, test.answer_key, res.bubble_data)
 
@@ -404,9 +459,12 @@ def omr_task(self, file_path: str, chat_id: int, attempt_id: int):
 
 
 def _error_message(error_code: str) -> str:
-    """Xato kodi → foydalanuvchiga tushunarli xabar."""
+    """Xato kodi → foydalanuvchiga tushunarli xabar (HTML uchun escape qilingan)."""
+    from app.services.telegram import escape
+
     messages = {
         "QR not found": "Varaqdagi QR kod o'qilmadi. To'liq, aniq suratga oling.",
         "Anchor topilmadi": "Varaq burchaklari ko'rinmayapti. Butun varaqni kadrga oling.",
     }
-    return messages.get(error_code, f"❌ Xatolik: {error_code}")
+    # Noma'lum kod — pipeline'dan kelgan erkin matn, ichida `<` bo'lishi mumkin.
+    return messages.get(error_code, f"❌ Xatolik: {escape(error_code)}")

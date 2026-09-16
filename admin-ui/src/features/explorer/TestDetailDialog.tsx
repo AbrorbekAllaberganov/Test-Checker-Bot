@@ -16,10 +16,14 @@ import { Progress } from '@/components/ui/progress'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { formatDateTime, formatNumber, formatPercent } from '@/lib/format'
+import { DrillBackButton } from './DrillBackButton'
 
 interface Props {
   testId: number | null
   onClose: () => void
+  onBack?: () => void
+  /** Berilsa, natija qatoriga bosilganda o'quvchi tafsilotiga o'tiladi. */
+  onOpenStudent?: (studentId: number) => void
 }
 
 /**
@@ -28,7 +32,12 @@ interface Props {
  * Savol tahlili (item analysis) — qaysi savol ko'p xato qilinganini
  * ko'rsatadi: past foiz yo savol qiyin, yo kalit noto'g'ri kiritilgan.
  */
-export function TestDetailDialog({ testId, onClose }: Props) {
+export function TestDetailDialog({
+  testId,
+  onClose,
+  onBack,
+  onOpenStudent,
+}: Props) {
   const { data: test, isLoading } = useTest(testId)
 
   async function handleExport() {
@@ -55,6 +64,7 @@ export function TestDetailDialog({ testId, onClose }: Props) {
         ) : (
           <>
             <DialogHeader>
+              <DrillBackButton onBack={onBack} />
               <DialogTitle>{test.title}</DialogTitle>
               <DialogDescription>
                 {test.group_name}
@@ -98,7 +108,12 @@ export function TestDetailDialog({ testId, onClose }: Props) {
                         {test.results.map((result) => (
                           <tr
                             key={`${result.student_id}-${result.attempt_id}`}
-                            className="border-b last:border-0"
+                            onClick={() => onOpenStudent?.(result.student_id)}
+                            className={
+                              onOpenStudent
+                                ? 'cursor-pointer border-b last:border-0 hover:bg-muted/50'
+                                : 'border-b last:border-0'
+                            }
                           >
                             <td className="py-2">
                               <span className="flex items-center gap-1.5">

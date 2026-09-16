@@ -65,6 +65,50 @@ class StudentResultItem(BaseModel):
     created_at: Optional[datetime] = None
 
 
+class StudentAttemptItem(BaseModel):
+    """
+    O'quvchiga berilgan bitta varaq (titul) va uning natijasi.
+
+    Manba — `tituls`, `attempts` emas: varaq berilgan-u hali skanlanmagan
+    bo'lsa ham qator ko'rinadi (`attempt_id is None`). Shu sababli bu yerda
+    "urinish" emas, "ishlagan testi" ma'nosi.
+    """
+
+    titul_id: int
+    titul_created_at: datetime
+    test_id: int
+    test_title: str
+    question_count: int
+    variant_count: int
+
+    attempt_id: Optional[int] = None
+    score: Optional[int] = None
+    total: Optional[int] = None
+    percent: Optional[float] = None
+    needs_review: bool = False
+    manual_override: bool = False
+    confidence: Optional[float] = None
+    status: Optional[str] = None  # None = skan yo'q
+    created_at: Optional[datetime] = None
+
+
+class StudentDetail(BaseModel):
+    id: int
+    full_name: str
+    telegram_id: Optional[int] = None
+    group_id: int
+    group_name: Optional[str] = None
+    owner_id: Optional[int] = None
+    owner_name: Optional[str] = None
+    created_at: datetime
+    tituls_count: int = 0
+    attempts_count: int = 0
+    graded_count: int = 0
+    avg_percent: Optional[float] = None
+    best_percent: Optional[float] = None
+    attempts: list[StudentAttemptItem] = Field(default_factory=list)
+
+
 class GroupDetail(BaseModel):
     id: int
     name: str

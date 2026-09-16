@@ -4,6 +4,10 @@ x-app-base: &app-base
   build:
     context: .
     dockerfile: Dockerfile
+    args:
+      # Prod serverda `.env` da INSTALL_DEV=false qiling — image'ga pytest
+      # va boshqa test bog'liqliklari tushmaydi.
+      INSTALL_DEV: ${INSTALL_DEV:-true}
   env_file: .env
   volumes:
     - pdf_data:/data/pdfs
@@ -19,16 +23,18 @@ x-app-base: &app-base
 services:
 
   # ── PostgreSQL ────────────────────────────────────────────
+  # Port FAQAT 127.0.0.1 ga bog'langan: bazaga tashqaridan ulanib
+  # bo'lmaydi, lokal `psql` va SSH tunnel esa ishlaydi.
   postgres:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-omruser}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-omrpass}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD .env da belgilanishi shart}
       POSTGRES_DB: ${POSTGRES_DB:-omrdb}
     volumes:
       - pg_data:/var/lib/postgresql/data
     ports:
-      - "5433:5432"
+      - "127.0.0.1:5433:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-omruser} -d ${POSTGRES_DB:-omrdb}"]
       interval: 5s
@@ -37,28 +43,45 @@ services:
     restart: unless-stopped
 
   # ── Redis ─────────────────────────────────────────────────
+  # Parol MAJBURIY: Redis'da Celery navbati va FSM state'lar turadi —
+  # parolsiz ochiq Redis'ga istalgan kishi task yubora oladi.
   redis:
     image: redis:7-alpine
-    command: redis-server --appendonly yes
+    command: >
+      redis-server --appendonly yes
+      --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD .env da belgilanishi shart}
     volumes:
       - redis_data:/data
     ports:
-      - "6380:6379"
+      - "127.0.0.1:6380:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "--no-auth-warning", "ping"]
       interval: 5s
       timeout: 3s
       retries: 10
     restart: unless-stopped
 
   # ── FastAPI (REST API) ────────────────────────────────────
+  # Standart bog'lanish 127.0.0.1 — oldida nginx/caddy (HTTPS) turadi.
+  # Proxy yo'q bo'lsa `.env` da API_BIND_HOST=0.0.0.0 qiling.
   api:
     <<: *app-base
     environment:
       - SERVICE_NAME=api
-    command: uvicorn app.api.main:app --host 0.0.0.0 --port 8000 --reload
+    command: >
+      uvicorn app.api.main:app
+      --host 0.0.0.0 --port 8000
+      --proxy-headers --forwarded-allow-ips=${TRUSTED_PROXY_IPS:-127.0.0.1}
     ports:
-      - "8000:8000"
+      - "${API_BIND_HOST:-127.0.0.1}:8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      # OpenCV/WeasyPrint import qilinishi sekin — birinchi tekshiruvgacha
+      # yetarlicha vaqt beramiz, aks holda konteyner "unhealthy" ko'rinadi.
+      start_period: 40s
 
   # ── aiogram Bot ───────────────────────────────────────────
   bot:
@@ -85,25 +108,29 @@ services:
       celery -A app.worker.celery_app flower
       --port=5555
     ports:
-      - "5555:5555"
+      - "127.0.0.1:5555:5555"
     profiles:
       - monitoring
 
   # ── Grafana Loki (Log Ingestion) ──────────────────────────
+  # Standart profilda qoladi: ilova LOKI_URL ga log yozadi va Loki
+  # ko'tarilmagan bo'lsa yozuvlar navbatda to'planib qolardi.
   loki:
     image: grafana/loki:3.0.0
     ports:
-      - "3100:3100"
+      - "127.0.0.1:3100:3100"
     command: -config.file=/etc/loki/local-config.yaml
     restart: unless-stopped
 
   # ── Grafana (Log Visualization) ──────────────────────────
+  # Faqat 127.0.0.1 — kirish uchun SSH tunnel:
+  #   ssh -L 3001:127.0.0.1:3001 user@server
   grafana:
     image: grafana/grafana:latest
     ports:
-      - "3001:3000"
+      - "127.0.0.1:3001:3000"
     environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD .env da belgilanishi shart}
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning
     depends_on:

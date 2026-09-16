@@ -19,13 +19,30 @@ async def get_or_create_user(
     full_name: Optional[str] = None,
     username: Optional[str] = None,
 ) -> User:
-    """Telegram ID bo'yicha foydalanuvchi olish yoki yaratish."""
+    """
+    Telegram ID bo'yicha foydalanuvchi olish yoki yaratish.
+
+    Mavjud foydalanuvchining ismi/username'i Telegram'da o'zgargan bo'lsa
+    (va chaqiruvchi yangi qiymatni bergan bo'lsa) — yangilanadi. `None`
+    berilsa eski qiymat saqlanadi (callback'dan ism kelmasligi mumkin).
+    """
     result = await db.execute(select(User).where(User.telegram_id == telegram_id))
     user = result.scalar_one_or_none()
 
     if user is None:
         user = User(telegram_id=telegram_id, full_name=full_name, username=username)
         db.add(user)
+        await db.flush()
+        return user
+
+    changed = False
+    if full_name is not None and user.full_name != full_name:
+        user.full_name = full_name
+        changed = True
+    if username is not None and user.username != username:
+        user.username = username
+        changed = True
+    if changed:
         await db.flush()
 
     return user
@@ -57,11 +74,10 @@ async def get_group(db: AsyncSession, group_id: int) -> Optional[Group]:
 async def get_group_for_owner(
     db: AsyncSession, group_id: int, owner_id: int
 ) -> Optional[Group]:
-    """Faqat o'z guruhini olish (xavfsizlik)."""
-    result = await db.execute(
-        select(Group).where(Group.id == group_id, Group.owner_id == owner_id)
-    )
-    return result.scalar_one_or_none()
+    """Faqat o'z guruhini olish. `services/access.owned_group` ning eski nomi."""
+    from app.services.access import owned_group
+
+    return await owned_group(db, group_id, owner_id)
 
 
 async def delete_group(db: AsyncSession, group_id: int, owner_id: int) -> bool:

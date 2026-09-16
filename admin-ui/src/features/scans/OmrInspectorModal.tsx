@@ -26,6 +26,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { useAuthedBlobUrl } from '@/hooks/useAuthedBlobUrl'
 import { formatDateTime, formatPercent } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { ConfidenceMeter } from './ConfidenceMeter'
@@ -176,6 +177,65 @@ function QuestionRow({
   )
 }
 
+/**
+ * Auth'li endpointdan skan fayli. `<img src>` to'g'ridan-to'g'ri ishlamaydi —
+ * Bearer token kerak, shu sababli blob URL orqali (useAuthedBlobUrl).
+ *
+ * Fayl PDF ham bo'lishi mumkin (bot PDF hujjatni qabul qiladi) — u holda
+ * `<img>` buzilgan rasm ko'rsatardi, shu sababli brauzerning PDF ko'ruvchisi
+ * `<iframe>` da beriladi (Mini App'dagi mantiq bilan bir xil).
+ */
+function AuthedFilePreview({ url, alt }: { url: string; alt: string }) {
+  const { blobUrl, isPdf, loading, error } = useAuthedBlobUrl(url)
+
+  if (loading) {
+    return <Skeleton className="h-[52vh] w-full rounded-lg" />
+  }
+  if (error || !blobUrl) {
+    return (
+      <div className="flex h-[32vh] flex-col items-center justify-center rounded-lg border border-dashed text-sm text-muted-foreground">
+        <ImageOff className="mb-2 h-8 w-8 opacity-40" />
+        Fayl yuklanmadi
+      </div>
+    )
+  }
+  if (isPdf) {
+    return (
+      <>
+        <iframe
+          src={`${blobUrl}#toolbar=0&navpanes=0`}
+          title={alt}
+          className="h-[52vh] w-full rounded-lg border bg-white"
+        />
+        <p className="mt-1 text-center text-xs text-muted-foreground">
+          <a
+            href={blobUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="underline underline-offset-2"
+          >
+            PDF'ni alohida oynada ochish
+          </a>
+        </p>
+      </>
+    )
+  }
+  return (
+    <>
+      <a href={blobUrl} target="_blank" rel="noreferrer">
+        <img
+          src={blobUrl}
+          alt={alt}
+          className="max-h-[52vh] w-full rounded-lg border object-contain"
+        />
+      </a>
+      <p className="mt-1 text-center text-xs text-muted-foreground">
+        Kattalashtirish uchun rasmni bosing
+      </p>
+    </>
+  )
+}
+
 function ImagePanel({ scan }: { scan: OmrInspector }) {
   const [tab, setTab] = useState(scan.debug_url ? 'debug' : 'source')
 
@@ -186,7 +246,7 @@ function ImagePanel({ scan }: { scan: OmrInspector }) {
 
   if (images.length === 0) {
     return (
-      <div className="flex h-full min-h-[300px] flex-col items-center justify-center rounded-lg border border-dashed text-sm text-muted-foreground">
+      <div className="flex min-h-[300px] flex-col items-center justify-center rounded-lg border border-dashed text-sm text-muted-foreground">
         <ImageOff className="mb-2 h-8 w-8 opacity-40" />
         Rasm saqlanmagan
         <p className="mt-1 max-w-xs px-4 text-center text-xs">
@@ -197,7 +257,10 @@ function ImagePanel({ scan }: { scan: OmrInspector }) {
   }
 
   return (
-    <Tabs value={tab} onValueChange={setTab} className="flex h-full flex-col">
+    // `h-full` YO'Q: chap ustun grid qatoriga cho'zilgan bo'ladi va rasm
+    // paneli 100% balandlikni egallab, pastdagi "Natija"/"Ishonchlilik"
+    // kartochkalarini ustundan tashqariga (footer ustiga) itarib yuborardi.
+    <Tabs value={tab} onValueChange={setTab} className="flex flex-col">
       <TabsList className="w-full">
         {images.map((image) => (
           <TabsTrigger key={image.key} value={image.key} className="flex-1">
@@ -207,18 +270,8 @@ function ImagePanel({ scan }: { scan: OmrInspector }) {
       </TabsList>
 
       {images.map((image) => (
-        <TabsContent key={image.key} value={image.key} className="mt-2 flex-1">
-          <a href={image.url!} target="_blank" rel="noreferrer">
-            <img
-              src={image.url!}
-              alt={image.label}
-              loading="lazy"
-              className="max-h-[60vh] w-full rounded-lg border object-contain"
-            />
-          </a>
-          <p className="mt-1 text-center text-xs text-muted-foreground">
-            Kattalashtirish uchun rasmni bosing
-          </p>
+        <TabsContent key={image.key} value={image.key} className="mt-2">
+          <AuthedFilePreview url={image.url!} alt={image.label} />
         </TabsContent>
       ))}
     </Tabs>

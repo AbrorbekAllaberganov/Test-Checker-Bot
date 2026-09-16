@@ -31,7 +31,8 @@ async def generate_tituls(
     from app.worker.tasks import pdf_task
 
     try:
-        titul_ids = await titul_svc.generate_tituls_for_test(db, test_id)
+        # Ichki API (X-Internal-Key) — tenant'siz, shu sababli owner_id=None.
+        titul_ids = await titul_svc.generate_tituls_for_test(db, test_id, owner_id=None)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -45,7 +46,7 @@ async def generate_tituls(
 
 @router.get("/tests/{test_id}", response_model=list[TitulOut])
 async def list_tituls(test_id: int, db: AsyncSession = Depends(get_db)):
-    tituls = await titul_svc.get_tituls_by_test(db, test_id)
+    tituls = await titul_svc.get_tituls_by_test(db, test_id, owner_id=None)
     return tituls
 
 

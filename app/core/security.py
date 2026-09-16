@@ -30,16 +30,21 @@ ALGORITHM = "HS256"
 TokenType = Literal["access", "refresh"]
 
 # `.env.example` dagi namunaviy qiymatlar — bular bilan token imzolash
-# xavfli, chunki kalit ochiq repoda turadi.
+# yoki ichki API'ni himoyalash xavfli, chunki kalit ochiq repoda turadi.
 _INSECURE_SECRETS = frozenset(
     {
         "change-me",
         "change-me-use-a-random-32-char-secret",
+        "change-me-super-secret-internal-key",
+        "CHANGE_ME_INTERNAL_API_KEY_32_BELGIDAN_UZUN",
         "secret",
         "changeme",
     }
 )
 MIN_SECRET_LENGTH = 32
+# Ichki kalit uchun biroz yumshoqroq chegara — u faqat konteynerlar
+# orasida yuradi, lekin baribir taxmin qilib bo'lmaydigan bo'lishi kerak.
+MIN_INTERNAL_KEY_LENGTH = 24
 
 
 class TokenError(Exception):
@@ -69,6 +74,28 @@ def assert_secret_is_safe() -> None:
             "Admin panel o'chirilgan: SECRET_KEY namunaviy yoki juda qisqa "
             f"(kamida {MIN_SECRET_LENGTH} belgi). Yangi kalit yarating va "
             ".env ga yozing: "
+            'python -c "import secrets; print(secrets.token_hex(32))"'
+        )
+
+
+def assert_internal_key_is_safe() -> None:
+    """
+    Ichki API kaliti xavfsizligini tekshiradi.
+
+    `INTERNAL_API_KEY` bot va worker'ning API'ga kirish parolidir
+    (`/attempts/*`). U `.env.example` dagi namunaviy qiymatda qolsa,
+    repo'ni ko'rgan har kim skan yuborishi, urinish natijasini o'qishi
+    va bahoni o'zgartirishi mumkin bo'ladi.
+
+    Shu sababli bunday holatda himoyalangan endpointlar 503 qaytaradi.
+    Bot va Mini App bu kalitga bog'liq emas — ular ishlashda davom etadi.
+    """
+    key = get_settings().internal_api_key
+    if key in _INSECURE_SECRETS or len(key) < MIN_INTERNAL_KEY_LENGTH:
+        raise InsecureSecretError(
+            "Ichki API o'chirilgan: INTERNAL_API_KEY namunaviy yoki juda "
+            f"qisqa (kamida {MIN_INTERNAL_KEY_LENGTH} belgi). Yangi kalit "
+            "yarating va .env ga yozing: "
             'python -c "import secrets; print(secrets.token_hex(32))"'
         )
 

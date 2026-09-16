@@ -42,6 +42,9 @@ docker compose exec -T postgres psql -U omruser -d omrdb -c "SELECT ..."
 kodda qolib ketadi va nosozlik "sirli" ko'rinadi. Model yoki `app/services/`
 o'zgarsa — `docker compose build` (servis nomisiz) qiling.
 Compose'da source volume mount YO'Q → har o'zgarishda rebuild kerak.
+`build` konteynerni QAYTA ISHGA TUSHIRMAYDI — keyin `docker compose up -d`
+ham qiling, aks holda konteyner eski image'da qolib, o'zgarish "yetib
+kelmagandek" ko'rinadi. Admin panel `dist` ham shu image ichida yig'iladi.
 
 **2. Barcha `TIMESTAMPTZ` ustunlari tz-aware datetime talab qiladi.**
 `datetime.now()` (naive) bilan solishtirish asyncpg'da
@@ -70,7 +73,16 @@ bo'lmaydi — `users.admin_role` ni bazada o'zgartiring.
 qilishni ham rad etadi (503). Bu bug emas. Bot va Mini App bunga bog'liq
 emas — ular `bot_token` HMAC'idan foydalanadi.
 
-**7. Bash tool heredoc ichida `\n` ni buzadi.**
+**7. Compose endi majburiy sirlarni talab qiladi.**
+`.env` da `POSTGRES_PASSWORD`, `REDIS_PASSWORD`, `GRAFANA_ADMIN_PASSWORD`
+bo'lmasa `docker compose` umuman ishga tushmaydi (bu ataylab).
+`REDIS_URL` ichidagi parol `REDIS_PASSWORD` bilan bir xil bo'lishi shart —
+compose `env_file` ichidagi `${...}` ni kengaytirmaydi.
+Postgres paroli `.env` dan **o'zgarmaydi**: u faqat baza birinchi marta
+yaratilganda o'rnatiladi, keyin `ALTER USER omruser PASSWORD '...'` kerak
+(`docs/08` §8.1.1).
+
+**8. Bash tool heredoc ichida `\n` ni buzadi.**
 Python/TS satrlariga escape yozish kerak bo'lsa `Write`/`Edit` tool'ini
 ishlating, `cat <<'EOF'` emas — `"\n"` haqiqiy qator uzilishiga aylanib
 faylni sintaksis xatosiga olib keladi.
@@ -136,6 +148,11 @@ Rollar iyerarxik: `ANALYST` < `SUPPORT_OPERATOR` < `SUPERADMIN`.
 - Grafik ranglari: `--series-1..3` (kategorik, tartibi o'zgarmaydi) va
   `--status-good/warning/critical` (holat). Ikkisi aralashtirilmaydi;
   status rangi "4-qator" sifatida ishlatilmaydi.
+- **Egalik (tenant):** ustoz ma'lumotiga tegadigan har servis funksiyasi
+  majburiy `owner_id` oladi (`None` = ataylab tenant'siz: ichki API, admin,
+  worker). Bot handlerlari va `/api/web/*` obyektni `services/access.py`
+  dagi `owned_*` orqali oladi; begona obyekt → "topilmadi"/404, 403 emas.
+  Yangi callback yoki endpoint yozsangiz — shu qoida.
 - Admin amali o'zgartiruvchi bo'lsa — `services/audit.record(...)` chaqiring.
 - Telegram HTML xabarida foydalanuvchi matni — `services/telegram.escape()`.
 
@@ -156,16 +173,16 @@ Rollar iyerarxik: `ANALYST` < `SUPPORT_OPERATOR` < `SUPERADMIN`.
 
 Bular `weaknesses.md` da batafsil. Eng muhimlari:
 
-1. **`.env.example` da haqiqiy bot tokeni git tarixida** va hozir ham
-   ishlatilmoqda. BotFather orqali revoke qilinishi kerak.
-2. **`/api/web/*` da tenant izolyatsiyasi yo'q (IDOR)** — istalgan ustoz
-   boshqa ustozning javob kalitlari va natijalarini ko'radi hamda
-   o'zgartiradi. `get_webapp_user` chaqiriladi, lekin `user` filtrda
-   ishlatilmaydi.
-3. **Bot callback'larida egalik tekshiruvi yo'q** — soxta callback data
-   bilan boshqa ustoz ma'lumotiga kirish mumkin.
-4. **`/static/*` autentifikatsiyasiz** va PDF nomlari ketma-ket ID'li →
-   barcha titullarni (F.I.Sh + QR) enumeratsiya qilib olish mumkin.
+1. **Bot tokeni git tarixida.** `.env.example` dan olib tashlandi (FAZA 0),
+   lekin eski commitlarda qolgan va hozir ham ishlatilmoqda —
+   **BotFather orqali revoke qilinishi kerak** (buni faqat odam qila oladi).
+   CI har push'da git'dagi fayllarni token shabloniga tekshiradi.
+2. ~~`/api/web/*` IDOR~~ — **tuzatildi (FAZA 1).** Har endpoint `user.id`
+   bilan filtrlaydi; egalik zanjiri `services/access.py` da.
+3. ~~Bot callback'larida egalik yo'q~~ — **tuzatildi (FAZA 1).**
+4. ~~`/static/*` auth'siz~~ — **tuzatildi (FAZA 1).** Mount'lar yo'q; fayllar
+   `/api/web/attempts/{id}/file/{kind}` va `/api/admin/scans/{id}/file/{kind}`
+   orqali (frontend fetch + blob URL, `<img src>` emas).
 5. **5 variantli test aslida ishlamaydi** — `omr/layout.py` da `options`
    faqat `"ABCD"`. Bot 5 variantni tanlashga ruxsat beradi, lekin PDF'da
    E doirasi chizilmaydi va OMR uni o'qimaydi.

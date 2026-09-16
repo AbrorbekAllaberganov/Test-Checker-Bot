@@ -61,13 +61,30 @@ async def get_titul_by_uuid(
     return result.scalar_one_or_none()
 
 
-async def get_tituls_by_test(db: AsyncSession, test_id: int) -> list[Titul]:
-    result = await db.execute(
+async def get_tituls_by_test(
+    db: AsyncSession, test_id: int, *, owner_id: Optional[int]
+) -> list[Titul]:
+    """
+    Testning titullari.
+
+    `owner_id` majburiy: ustoz berilsa faqat o'z testi (aks holda bo'sh
+    ro'yxat — PDF'lar F.I.Sh + QR saqlaydi, begonaga chiqmasligi kerak);
+    `None` — ichki API/admin.
+    """
+    stmt = (
         select(Titul)
         .where(Titul.test_id == test_id)
         .options(selectinload(Titul.student))
-        .order_by(Titul.id)
     )
+    if owner_id is not None:
+        from app.models.group import Group
+
+        stmt = (
+            stmt.join(Test, Test.id == Titul.test_id)
+            .join(Group, Group.id == Test.group_id)
+            .where(Group.owner_id == owner_id)
+        )
+    result = await db.execute(stmt.order_by(Titul.id))
     return list(result.scalars().all())
 
 
@@ -85,23 +102,35 @@ async def update_pdf_path(
 async def generate_tituls_for_test(
     db: AsyncSession,
     test_id: int,
+    *,
+    owner_id: Optional[int],
 ) -> list[int]:
     """
     Test uchun barcha studentlar uchun titul (DB yozuvi) yaratadi.
-    Celery task ID'lari qaytaradi.
+
+    `owner_id` majburiy: ustoz berilsa test unga tegishli bo'lishi shart
+    (aks holda `ValueError("Test topilmadi")` — begona testga titul
+    generatsiya qilib PDF olish yo'li yopiladi). `None` — ichki API.
 
     Returns:
         Yaratilgan yoki mavjud titul ID'lari ro'yxati.
     """
     from app.services.students import get_students_by_group
-    from app.models.test import Test as TestModel
 
-    test_result = await db.execute(select(TestModel).where(TestModel.id == test_id))
-    test = test_result.scalar_one_or_none()
+    if owner_id is not None:
+        from app.services.access import owned_test
+
+        test = await owned_test(db, test_id, owner_id)
+    else:
+        test = (
+            await db.execute(select(Test).where(Test.id == test_id))
+        ).scalar_one_or_none()
     if test is None:
         raise ValueError(f"Test topilmadi: {test_id}")
 
-    students = await get_students_by_group(db, test.group_id)
+    # Test egaligi tekshirildi — o'quvchilar shu testning guruhidan olinadi,
+    # qo'shimcha filtr kerak emas.
+    students = await get_students_by_group(db, test.group_id, owner_id=None)
     if not students:
         raise ValueError("Guruhda o'quvchi yo'q")
 

@@ -19,6 +19,7 @@ import type {
   Page,
   PlanOut,
   ScanListItem,
+  StudentDetail,
   StudentListItem,
   SubscriptionOut,
   SubscriptionRow,
@@ -52,6 +53,7 @@ export const queryKeys = {
 
   students: ['students'] as const,
   studentList: (params: StudentListParams) => ['students', 'list', params] as const,
+  student: (id: number) => ['students', 'detail', id] as const,
 
   tests: ['tests'] as const,
   testList: (params: TestListParams) => ['tests', 'list', params] as const,
@@ -275,6 +277,17 @@ export function useStudents(params: StudentListParams) {
       return data
     },
     placeholderData: keepPreviousData,
+  })
+}
+
+export function useStudent(id: number | null) {
+  return useQuery({
+    queryKey: queryKeys.student(id ?? 0),
+    queryFn: async () => {
+      const { data } = await api.get<StudentDetail>(`/api/admin/students/${id}`)
+      return data
+    },
+    enabled: id !== null,
   })
 }
 

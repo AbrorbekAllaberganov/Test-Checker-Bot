@@ -1,5 +1,6 @@
 """
-app/tests/test_admin_security.py — Admin JWT va rol iyerarxiyasi testlari.
+app/tests/test_admin_security.py — Admin JWT, rol iyerarxiyasi va ichki
+API kaliti testlari.
 """
 from __future__ import annotations
 
@@ -7,13 +8,16 @@ from datetime import datetime, timedelta, timezone
 
 import jwt
 import pytest
+from fastapi import HTTPException
 
 from app.api.admin.deps import _ROLE_WEIGHT
+from app.api.deps import verify_internal_key
 from app.core.config import get_settings
 from app.core.security import (
     ALGORITHM,
     InsecureSecretError,
     TokenError,
+    assert_internal_key_is_safe,
     create_access_token,
     create_refresh_token,
     decode_token,
@@ -113,6 +117,61 @@ class TestTokens:
     def test_garbage_token_rejected(self):
         with pytest.raises(TokenError):
             decode_token("bu-token-emas", expected_type="access")
+
+
+class TestInternalKeyGuard:
+    """
+    `INTERNAL_API_KEY` namunaviy qolsa `/attempts/*` ishlamasligi kerak.
+
+    Nima uchun 503 va 403 emas: kalit noto'g'ri emas — SERVER noto'g'ri
+    sozlangan. 403 bo'lsa chaqiruvchi kalitni almashtirib ko'rardi, aslida
+    muammo `.env` da.
+    """
+
+    @pytest.fixture
+    def internal_key(self):
+        """Har test o'z kalitini o'rnatadi va keyin asliga qaytaradi."""
+        settings = get_settings()
+        original = settings.internal_api_key
+
+        def _set(value: str) -> None:
+            settings.internal_api_key = value
+
+        yield _set
+        settings.internal_api_key = original
+
+    @pytest.mark.parametrize(
+        "weak",
+        [
+            "change-me",
+            "change-me-super-secret-internal-key",
+            "qisqa-kalit",
+        ],
+    )
+    def test_weak_key_rejected_by_guard(self, internal_key, weak):
+        internal_key(weak)
+        with pytest.raises(InsecureSecretError):
+            assert_internal_key_is_safe()
+
+    def test_strong_key_accepted_by_guard(self, internal_key):
+        internal_key("f" * 64)
+        assert_internal_key_is_safe()  # istisno ko'tarilmasligi kerak
+
+    async def test_weak_key_returns_503(self, internal_key):
+        internal_key("change-me")
+        with pytest.raises(HTTPException) as exc_info:
+            await verify_internal_key(x_internal_key="change-me")
+        assert exc_info.value.status_code == 503
+
+    async def test_wrong_key_returns_403(self, internal_key):
+        internal_key("f" * 64)
+        with pytest.raises(HTTPException) as exc_info:
+            await verify_internal_key(x_internal_key="g" * 64)
+        assert exc_info.value.status_code == 403
+
+    async def test_correct_key_passes(self, internal_key):
+        internal_key("f" * 64)
+        assert await verify_internal_key(x_internal_key="f" * 64) is None
 
 
 class TestRoleHierarchy:

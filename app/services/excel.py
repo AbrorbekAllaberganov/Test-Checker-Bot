@@ -4,6 +4,7 @@ app/services/excel.py — Natijalarni Excel (.xlsx) formatida eksport qilish ser
 from __future__ import annotations
 
 import io
+import re
 from datetime import datetime
 from typing import Optional
 
@@ -18,6 +19,35 @@ from app.models.student import Student
 from app.models.test import Test
 from app.models.titul import Titul
 from app.models.group import Group
+
+# Excel/LibreOffice bu belgilar bilan boshlangan katakni FORMULA deb ishlaydi
+# (`=HYPERLINK(...)`, `=cmd|...`). O'quvchi F.I.Sh yoki test nomi ustoz
+# kiritgan erkin matn — u to'g'ridan-to'g'ri hujayraga tushmasligi kerak.
+_FORMULA_PREFIX = ("=", "+", "-", "@", "\t", "\r")
+
+
+def safe_cell(value):
+    """
+    Formula sifatida talqin qilinishi mumkin bo'lgan matnni neytrallaydi.
+
+    Xavfli prefiks oldiga `'` qo'yiladi — Excel uni "matn" deb ko'rsatadi
+    (apostrofning o'zi ko'rinmaydi). Matn bo'lmagan qiymatlar o'zgarmaydi.
+    """
+    if isinstance(value, str) and value.startswith(_FORMULA_PREFIX):
+        return "'" + value
+    return value
+
+
+def safe_filename(name: object, fallback: str = "fayl", max_len: int = 60) -> str:
+    """
+    Foydalanuvchi matnidan Telegram'ga yuboriladigan fayl nomi yasaydi.
+
+    Harf/raqam/`_`/`-` dan boshqa hamma narsa (`/`, `"`, `..`, bo'shliq)
+    `_` ga aylanadi — yo'l ajratgichlar va tirnoqlar fayl nomiga tushmaydi.
+    """
+    cleaned = re.sub(r"[^\w\-]+", "_", str(name or ""), flags=re.UNICODE)
+    cleaned = cleaned.strip("_")[:max_len].strip("_")
+    return cleaned or fallback
 
 
 def _style_sheet(ws) -> None:
@@ -135,9 +165,9 @@ async def export_all_excel(db: AsyncSession, owner_id: int) -> bytes:
     
     for r in rows:
         ws.append([
-            r[0],
-            r[1],
-            r[2],
+            safe_cell(r[0]),
+            safe_cell(r[1]),
+            safe_cell(r[2]),
             r[3],
             r[4],
             float(r[5]) if r[5] is not None else 0.0,
@@ -149,8 +179,15 @@ async def export_all_excel(db: AsyncSession, owner_id: int) -> bytes:
     return _to_bytes(wb)
 
 
-async def export_group_excel(db: AsyncSession, group_id: int) -> bytes:
-    """Belgilangan guruhdagi barcha olimpiadalar bo'yicha natijalar."""
+async def export_group_excel(
+    db: AsyncSession, group_id: int, *, owner_id: Optional[int]
+) -> bytes:
+    """
+    Belgilangan guruhdagi barcha olimpiadalar bo'yicha natijalar.
+
+    `owner_id` majburiy: ustoz berilsa faqat o'z guruhi (begona guruh →
+    bo'sh jadval); `None` — admin panel.
+    """
     stmt = (
         select(
             Test.title,
@@ -164,9 +201,12 @@ async def export_group_excel(db: AsyncSession, group_id: int) -> bytes:
         .join(Titul, Titul.id == Attempt.titul_id)
         .join(Student, Student.id == Titul.student_id)
         .join(Test, Test.id == Titul.test_id)
+        .join(Group, Group.id == Test.group_id)
         .where(Test.group_id == group_id, Attempt.status == "done")
         .order_by(Test.title, Attempt.percent.desc().nullslast())
     )
+    if owner_id is not None:
+        stmt = stmt.where(Group.owner_id == owner_id)
     rows = (await db.execute(stmt)).all()
 
     wb = Workbook()
@@ -186,8 +226,8 @@ async def export_group_excel(db: AsyncSession, group_id: int) -> bytes:
     
     for r in rows:
         ws.append([
-            r[0],
-            r[1],
+            safe_cell(r[0]),
+            safe_cell(r[1]),
             r[2],
             r[3],
             float(r[4]) if r[4] is not None else 0.0,
@@ -199,9 +239,14 @@ async def export_group_excel(db: AsyncSession, group_id: int) -> bytes:
     return _to_bytes(wb)
 
 
-async def export_test_excel(db: AsyncSession, test_id: int) -> bytes:
-    """Ushbu olimpiadada (testda) ishtirok etgan barcha o'quvchilar natijasi."""
-    # app/services/history.py test_results() mantiqini ishlatamiz yoki select query
+async def export_test_excel(
+    db: AsyncSession, test_id: int, *, owner_id: Optional[int]
+) -> bytes:
+    """
+    Ushbu olimpiadada (testda) ishtirok etgan barcha o'quvchilar natijasi.
+
+    `owner_id` majburiy: ustoz berilsa faqat o'z testi; `None` — admin.
+    """
     stmt = (
         select(
             Student.full_name,
@@ -213,9 +258,13 @@ async def export_test_excel(db: AsyncSession, test_id: int) -> bytes:
         )
         .join(Titul, Titul.id == Attempt.titul_id)
         .join(Student, Student.id == Titul.student_id)
+        .join(Test, Test.id == Titul.test_id)
+        .join(Group, Group.id == Test.group_id)
         .where(Titul.test_id == test_id, Attempt.status == "done")
         .order_by(Attempt.percent.desc().nullslast())
     )
+    if owner_id is not None:
+        stmt = stmt.where(Group.owner_id == owner_id)
     rows = (await db.execute(stmt)).all()
 
     wb = Workbook()
@@ -234,7 +283,7 @@ async def export_test_excel(db: AsyncSession, test_id: int) -> bytes:
     
     for r in rows:
         ws.append([
-            r[0],
+            safe_cell(r[0]),
             r[1],
             r[2],
             float(r[3]) if r[3] is not None else 0.0,
@@ -246,8 +295,14 @@ async def export_test_excel(db: AsyncSession, test_id: int) -> bytes:
     return _to_bytes(wb)
 
 
-async def export_student_excel(db: AsyncSession, student_id: int) -> bytes:
-    """Ushbu o'quvchi ishtirok etgan barcha olimpiadalar/testlar."""
+async def export_student_excel(
+    db: AsyncSession, student_id: int, *, owner_id: Optional[int]
+) -> bytes:
+    """
+    Ushbu o'quvchi ishtirok etgan barcha olimpiadalar/testlar.
+
+    `owner_id` majburiy: ustoz berilsa faqat o'z o'quvchisi; `None` — admin.
+    """
     stmt = (
         select(
             Test.title,
@@ -259,9 +314,12 @@ async def export_student_excel(db: AsyncSession, student_id: int) -> bytes:
         )
         .join(Titul, Titul.id == Attempt.titul_id)
         .join(Test, Test.id == Titul.test_id)
+        .join(Group, Group.id == Test.group_id)
         .where(Titul.student_id == student_id, Attempt.status == "done")
         .order_by(Attempt.created_at.desc())
     )
+    if owner_id is not None:
+        stmt = stmt.where(Group.owner_id == owner_id)
     rows = (await db.execute(stmt)).all()
 
     wb = Workbook()
@@ -280,7 +338,7 @@ async def export_student_excel(db: AsyncSession, student_id: int) -> bytes:
     
     for r in rows:
         ws.append([
-            r[0],
+            safe_cell(r[0]),
             r[1],
             r[2],
             float(r[3]) if r[3] is not None else 0.0,

@@ -14,6 +14,10 @@ javoblar varaqasi (titul) PDF generatsiya va OMR (computer vision) orqali skan o
 
 ---
 
+> [!TIP]
+> Kundalik buyruqlar (ishga tushirish, to'xtatish, rebuild, loglar,
+> muammolarni hal qilish) alohida faylda: **[ISHGA_TUSHIRISH.md](ISHGA_TUSHIRISH.md)**.
+
 ## Tezkor ishga tushirish
 
 ### 1. Muhit sozlash
@@ -22,10 +26,22 @@ Faylni nusxalang va o'zgartiring:
 * **Windows (PowerShell)**: `Copy-Item .env.example .env`
 * **Linux/macOS/GitBash**: `cp .env.example .env`
 
-`.env` faylini ochib, quyidagilarni to'ldiring:
+`.env` faylini ochib, barcha `CHANGE_ME_...` qiymatlarni almashtiring:
 * **`BOT_TOKEN`** — [@BotFather](https://t.me/BotFather) dan olingan Telegram bot tokeni.
 * **`BOT_USERNAME`** — Botingizning username-i (masalan, `omr_test_bot` shaklida).
-* **`POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB`** — Ma'lumotlar bazasi hisob ma'lumotlari.
+* **`POSTGRES_PASSWORD`** — baza paroli. `DATABASE_URL` va `SYNC_DATABASE_URL` ichidagi parol bilan **bir xil** bo'lishi shart.
+* **`REDIS_PASSWORD`** — Redis paroli. `REDIS_URL` ichidagi parol bilan **bir xil** bo'lishi shart (`redis://:PAROL@redis:6379/0`).
+* **`SECRET_KEY`**, **`INTERNAL_API_KEY`** — tasodifiy kalitlar (quyidagi buyruq bilan).
+* **`GRAFANA_ADMIN_PASSWORD`** — Grafana admin paroli.
+
+```bash
+python -c "import secrets; print(secrets.token_hex(32))"
+```
+
+> [!WARNING]
+> `.env.example` ga hech qachon haqiqiy token yoki parol yozmang — u git'da turadi va uni repo ko'rgan har kim o'qiydi. Sirlar faqat `.env` da (u `.gitignore` da).
+
+`REDIS_PASSWORD`, `POSTGRES_PASSWORD` va `GRAFANA_ADMIN_PASSWORD` bo'sh bo'lsa `docker compose` ataylab ishga tushmaydi va qaysi o'zgaruvchi yetishmayotganini aytadi.
 
 ### 2. Konteynerlarni ishga tushirish
 
@@ -35,29 +51,46 @@ Loyiha barcha xizmatlarni (Postgres, Redis, API, Bot, Celery Worker, Loki, Grafa
 # 1. Tasvirlarni qurish (build)
 docker compose build
 
-# 2. Konteynerlarni orqa fonda ishga tushirish
+# 2. Baza va Redis
+docker compose up -d postgres redis
+
+# 3. Migratsiya — ilova konteynerlaridan OLDIN (pastdagi izohga qarang)
+docker compose run --rm api alembic upgrade head
+
+# 4. Qolgan konteynerlarni orqa fonda ishga tushirish
 docker compose up -d
 ```
+
+> [!IMPORTANT]
+> Migratsiya **har doim** `up -d` dan oldin bajariladi. Yangi kod yangi ustunlarni o'qiydi — teskari tartibda bot ham, API ham migratsiya tugaguncha yiqilib turadi.
 
 > [!NOTE]
 > Agar tizimingizda Docker Compose v1 bo'lsa, `docker compose` o'rniga `docker-compose` yozishingiz kerak.
 
-### 3. Ma'lumotlar bazasi migratsiyasi
+### 3. Portlar va xavfsizlik
 
-Sxema va jadvallarni PostgreSQL da yaratish uchun migratsiyani ishga tushiring:
+Barcha portlar **faqat `127.0.0.1`** ga bog'langan — Postgres, Redis, Grafana va Loki internetdan ko'rinmaydi. Serverda API oldida HTTPS beruvchi reverse proxy (nginx/caddy) turishi kutiladi.
+
+Uzoqdagi serverda panelni ochish uchun SSH tunnel:
 
 ```bash
-docker compose exec api alembic upgrade head
+ssh -L 8000:127.0.0.1:8000 -L 3001:127.0.0.1:3001 user@server
 ```
+
+Reverse proxy yo'q bo'lsa va API portini ochish kerak bo'lsa, `.env` da `API_BIND_HOST=0.0.0.0` (tavsiya etilmaydi).
+
+Konteynerlar ichida ilova `root` emas, `appuser` (uid 10001) nomidan ishlaydi.
 
 ### 4. Loglarni real vaqtda kuzatish (Loki & Grafana)
 
 Loyiha real vaqtda loglarni yig'ish tizimiga ega. Agar botda biror muammo yoki xatolik yuz bersa, uni quyidagi interfeyslardan kuzatishingiz mumkin:
 
-* **Grafana (Vizualizatsiya)**: [http://localhost:3000](http://localhost:3000)
-  * **Login / Parol**: `admin` / `admin`
+* **Grafana (Vizualizatsiya)**: [http://127.0.0.1:3001](http://127.0.0.1:3001)
+  * **Login / Parol**: `admin` / `.env` dagi `GRAFANA_ADMIN_PASSWORD`
   * **Kuzatish**: Chap menyudan **Explore** bo'limiga o'ting, data source sifatida **Loki** tanlang va kerakli filtrni kiriting (masalan, `{service="bot"}` yoki `{service="worker"}`).
-* **Loki (Log Ingestor)**: [http://localhost:3100](http://localhost:3100)
+* **Loki (Log Ingestor)**: [http://127.0.0.1:3100](http://127.0.0.1:3100)
+
+Ikkalasi ham faqat lokal interfeysda — uzoq serverda SSH tunnel orqali oching.
 
 ### 5. Bot ishga tushganini tekshirish
 

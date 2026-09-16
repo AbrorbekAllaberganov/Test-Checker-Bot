@@ -944,7 +944,7 @@ async function fetchStudentDetails(studentId) {
 
         document.getElementById('student-profile-name').textContent = student.full_name;
         document.getElementById('student-profile-meta').textContent =
-            `Guruh: ${student.group_name} · Telegram ID: ${student.telegram_id || 'Ulanmagan'}`;
+            `Guruh: ${student.group_name}`;
 
         body.innerHTML = '';
         if (!student.history || student.history.length === 0) {
@@ -988,15 +988,31 @@ async function fetchStudentDetails(studentId) {
 /* ═══════════════════════════════════════════════════════
    API: ATTEMPT REVIEW
 ═══════════════════════════════════════════════════════ */
-function setReviewMedia(url) {
+/*
+   Rasm/PDF endi auth talab qiladigan endpointdan keladi
+   (/api/web/attempts/{id}/file/{kind}) — `<img src>` Authorization header
+   yubora olmaydi. Shu sababli apiFetch bilan yuklab, brauzer ichida blob
+   URL yasaymiz. Fayl turi kengaytmadan emas, Content-Type'dan aniqlanadi.
+*/
+const _mediaBlobCache = new Map();   // API URL → { blobUrl, isPdf }
+let _mediaRequestSeq = 0;            // kechikib kelgan eski javobni tashlab yuborish uchun
+
+function _revokeMediaBlobs() {
+    for (const entry of _mediaBlobCache.values()) {
+        try { URL.revokeObjectURL(entry.blobUrl); } catch (e) {}
+    }
+    _mediaBlobCache.clear();
+}
+
+async function setReviewMedia(url) {
     const img = document.getElementById('review-sheet-image');
     const iframe = document.getElementById('review-sheet-pdf');
     const placeholder = document.getElementById('review-img-placeholder');
-    
+
     img.classList.add('hidden');
     iframe.classList.add('hidden');
     placeholder.classList.remove('hidden');
-    
+
     if (!url) {
         placeholder.innerHTML = `
             <i data-lucide="image-off" class="w-10 h-10 mx-auto mb-2 opacity-40"></i>
@@ -1004,25 +1020,51 @@ function setReviewMedia(url) {
         lucide.createIcons();
         return;
     }
-    
-    const resolvedUrl = new URL(url, window.location.origin).href;
-    const isPdf = resolvedUrl.toLowerCase().endsWith('.pdf') || resolvedUrl.toLowerCase().includes('.pdf#');
-    
-    if (isPdf) {
-        const targetSrc = resolvedUrl.split('#')[0] + '#toolbar=0&navpanes=0';
+
+    const requestId = ++_mediaRequestSeq;
+    let entry = _mediaBlobCache.get(url);
+
+    if (!entry) {
+        placeholder.innerHTML = `
+            <i data-lucide="loader-2" class="w-8 h-8 mx-auto mb-2 opacity-50 animate-spin"></i>
+            <p class="text-sm">Rasm yuklanmoqda...</p>`;
+        lucide.createIcons();
+
+        try {
+            const res = await apiFetch(url);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const blob = await res.blob();
+            const contentType = (res.headers.get('content-type') || blob.type || '').toLowerCase();
+            entry = { blobUrl: URL.createObjectURL(blob), isPdf: contentType.includes('pdf') };
+            _mediaBlobCache.set(url, entry);
+        } catch (err) {
+            if (requestId !== _mediaRequestSeq) return;   // foydalanuvchi boshqa skanga o'tib ketgan
+            console.error('Skan faylini yuklashda xato:', err);
+            placeholder.innerHTML = `
+                <i data-lucide="image-off" class="w-10 h-10 mx-auto mb-2 opacity-40"></i>
+                <p class="text-sm text-rose-400">Rasm topilmadi yoki yuklanmadi</p>`;
+            lucide.createIcons();
+            return;
+        }
+    }
+
+    if (requestId !== _mediaRequestSeq) return;
+
+    if (entry.isPdf) {
+        const targetSrc = entry.blobUrl + '#toolbar=0&navpanes=0';
         if (iframe.src === targetSrc) {
             placeholder.classList.add('hidden');
-            iframe.classList.remove('hidden');
         } else {
             iframe.src = targetSrc;
-            iframe.classList.remove('hidden');
         }
+        iframe.classList.remove('hidden');
     } else {
-        if (img.src === resolvedUrl) {
+        if (img.src === entry.blobUrl) {
+            // onload qayta ishlamaydi — o'zimiz ko'rsatamiz
             placeholder.classList.add('hidden');
             img.classList.remove('hidden');
         } else {
-            img.src = resolvedUrl;
+            img.src = entry.blobUrl;   // onload placeholder'ni yashiradi
         }
     }
 }
@@ -1030,7 +1072,8 @@ function setReviewMedia(url) {
 async function loadAttemptReview(attemptId) {
     if (!attemptId) { showToast("Attempt ID topilmadi!", 'error'); return; }
 
-    // Reset image/pdf state
+    // Reset image/pdf state (oldingi skanning blob URL'lari bo'shatiladi)
+    _revokeMediaBlobs();
     document.getElementById('review-sheet-image').classList.add('hidden');
     document.getElementById('review-sheet-pdf').classList.add('hidden');
     document.getElementById('review-sheet-pdf').src = '';

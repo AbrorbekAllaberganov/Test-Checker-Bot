@@ -6,23 +6,26 @@ Oldingi (iyun) ro'yxatdan tuzatilganlar: bot skanida `titul_id=None` (002 migrat
 
 ---
 
+> ✅ belgisi — tuzatilgan (qavsda task raqami va sana). Matn tarix uchun
+> saqlanadi; bajarilish rejasi `tasks.md` da.
+
 ## 🔴 KRITIK
 
-1. **Haqiqiy bot tokeni git tarixida va u hozir ham ishlatilmoqda.** `.env.example:8` dagi token `591d758` (first commit) dan beri repoda. `.env` dagi joriy `BOT_TOKEN` aynan shu token. Repo ko'rgan har kim botni to'liq boshqaradi. Darhol BotFather orqali revoke qiling; faylni o'zgartirish yetarli emas.
+1. ✅ *(qisman — T-01, 2026-09-16: fayldan olindi, CI skani qo'shildi; REVOKE hali qilinmagan)* **Haqiqiy bot tokeni git tarixida va u hozir ham ishlatilmoqda.** `.env.example:8` dagi token `591d758` (first commit) dan beri repoda. `.env` dagi joriy `BOT_TOKEN` aynan shu token. Repo ko'rgan har kim botni to'liq boshqaradi. Darhol BotFather orqali revoke qiling; faylni o'zgartirish yetarli emas.
 
-2. **Web dashboard'da tenant izolyatsiyasi yo'q (IDOR).** `app/api/routes/web_api.py` barcha endpointlar `get_webapp_user` bilan himoyalangan, lekin `user` hech qayerda ishlatilmaydi. Istalgan ro'yxatdan o'tgan ustoz: barcha guruhlar (`:83`), boshqa ustozning o'quvchilari (`:109`), **javob kalitlari** (`:228`), natijalar (`:237`, `:289`) ni ko'radi va **istalgan attempt bahosini o'zgartiradi** (`:350`). `dashboard-stats` (`:47`) butun tizim statistikasini beradi.
+2. ✅ *(T-07, 2026-09-16)* **Web dashboard'da tenant izolyatsiyasi yo'q (IDOR).** `app/api/routes/web_api.py` barcha endpointlar `get_webapp_user` bilan himoyalangan, lekin `user` hech qayerda ishlatilmaydi. Istalgan ro'yxatdan o'tgan ustoz: barcha guruhlar (`:83`), boshqa ustozning o'quvchilari (`:109`), **javob kalitlari** (`:228`), natijalar (`:237`, `:289`) ni ko'radi va **istalgan attempt bahosini o'zgartiradi** (`:350`). `dashboard-stats` (`:47`) butun tizim statistikasini beradi.
 
-3. **Bot callback'larida egalik tekshiruvi yo'q (IDOR).** Callback data soxtalashtirilsa boshqa ustozning ma'lumotlariga kirish/o'zgartirish mumkin: `groups.py:62-67` (`group:`), `students.py:18-23,45-49` (ro'yxat, qo'shish), `tests.py:71,100,292,314,337,363` (test yaratish, titullarni PDF/ZIP yuklab olish), `results.py:125,144,166,193,247,289,347,366,385` (natijalar, Excel eksport). `gen_tituls:all` (`tests.py:249`) FSM'dagi tekshirilmagan `test_id` bilan boshqa ustoz testiga titul generatsiya qilib PDF oladi. Faqat `del_group` va `menu_*` to'g'ri.
+3. ✅ *(T-08, 2026-09-16)* **Bot callback'larida egalik tekshiruvi yo'q (IDOR).** Callback data soxtalashtirilsa boshqa ustozning ma'lumotlariga kirish/o'zgartirish mumkin: `groups.py:62-67` (`group:`), `students.py:18-23,45-49` (ro'yxat, qo'shish), `tests.py:71,100,292,314,337,363` (test yaratish, titullarni PDF/ZIP yuklab olish), `results.py:125,144,166,193,247,289,347,366,385` (natijalar, Excel eksport). `gen_tituls:all` (`tests.py:249`) FSM'dagi tekshirilmagan `test_id` bilan boshqa ustoz testiga titul generatsiya qilib PDF oladi. Faqat `del_group` va `menu_*` to'g'ri.
 
-4. **Statik fayllar autentifikatsiyasiz va taxmin qilinadigan nomlar bilan.** `app/api/main.py:49-51` — `/static/pdfs`, `/static/debug`, `/static/uploads`. PDF nomi `titul_{titul.id}_{student.id}.pdf` (`tasks.py:138-141`) — ID'lar ketma-ket, demak barcha o'quvchilar titullarini (F.I.Sh + QR) enumeratsiya qilib yuklab olish mumkin. QR'ga ega bo'lgan kishi o'quvchi nomidan soxta skan yuboradi. `/static/uploads` da o'quvchilar skanlari, `/static/debug` da annotatsiyalar.
+4. ✅ *(T-10, 2026-09-16)* **Statik fayllar autentifikatsiyasiz va taxmin qilinadigan nomlar bilan.** `app/api/main.py:49-51` — `/static/pdfs`, `/static/debug`, `/static/uploads`. PDF nomi `titul_{titul.id}_{student.id}.pdf` (`tasks.py:138-141`) — ID'lar ketma-ket, demak barcha o'quvchilar titullarini (F.I.Sh + QR) enumeratsiya qilib yuklab olish mumkin. QR'ga ega bo'lgan kishi o'quvchi nomidan soxta skan yuboradi. `/static/uploads` da o'quvchilar skanlari, `/static/debug` da annotatsiyalar.
 
-5. **Maxfiy kalitlar default qiymatda ishlashi mumkin.** `config.py:44` `internal_api_key="change-me"`, `:46` `secret_key="change-me-use-a-random-32-char-secret"`. Startup'da tekshiruv yo'q: `.env` da `SECRET_KEY` bo'lmasa admin JWT (`security.py:65`) ommaviy kalit bilan imzolanadi — istalgan kishi SUPERADMIN tokeni yasaydi.
+5. ✅ *(T-02, 2026-09-16)* **Maxfiy kalitlar default qiymatda ishlashi mumkin.** `config.py:44` `internal_api_key="change-me"`, `:46` `secret_key="change-me-use-a-random-32-char-secret"`. Startup'da tekshiruv yo'q: `.env` da `SECRET_KEY` bo'lmasa admin JWT (`security.py:65`) ommaviy kalit bilan imzolanadi — istalgan kishi SUPERADMIN tokeni yasaydi.
 
-6. **Docker portlari hali ham internetga ochiq.** `docker-compose.yml`: Postgres `5433` (`:29`), **parolsiz Redis** `6380` (`:41`), API `8000`, Loki `3100` (`:78`), Grafana `3001` `admin/admin` (`:88-92`) — hammasi `0.0.0.0`. Port raqamini o'zgartirish himoya emas. Redis orqali Celery navbatiga istalgan task yuboriladi, FSM state'lar o'qiladi.
+6. ✅ *(T-03, 2026-09-16)* **Docker portlari hali ham internetga ochiq.** `docker-compose.yml`: Postgres `5433` (`:29`), **parolsiz Redis** `6380` (`:41`), API `8000`, Loki `3100` (`:78`), Grafana `3001` `admin/admin` (`:88-92`) — hammasi `0.0.0.0`. Port raqamini o'zgartirish himoya emas. Redis orqali Celery navbatiga istalgan task yuboriladi, FSM state'lar o'qiladi.
 
-7. **`.dockerignore` yo'q, `.env` va `.git` image ichiga kiradi.** `Dockerfile:34` `COPY . .`; root user; dev-deps; `compose:59` prod'da `--reload`.
+7. ✅ *(T-04, 2026-09-16)* **`.dockerignore` yo'q, `.env` va `.git` image ichiga kiradi.** `Dockerfile:34` `COPY . .`; root user; dev-deps; `compose:59` prod'da `--reload`.
 
-8. **Deploy tartibi noto'g'ri — 003 migratsiya uchun downtime kafolatlangan.** `deploy.yml:48-51` avval konteynerlar yangi kod bilan ko'tariladi, keyin `alembic upgrade`. Yangi `User` modeli `admin_role`, `is_blocked` ustunlarini SELECT qiladi → migratsiya tugaguncha bot ham, API ham yiqiladi. CI'da test yo'q, rollback yo'q.
+8. ✅ *(T-05, 2026-09-16)* **Deploy tartibi noto'g'ri — 003 migratsiya uchun downtime kafolatlangan.** `deploy.yml:48-51` avval konteynerlar yangi kod bilan ko'tariladi, keyin `alembic upgrade`. Yangi `User` modeli `admin_role`, `is_blocked` ustunlarini SELECT qiladi → migratsiya tugaguncha bot ham, API ham yiqiladi. CI'da test yo'q, rollback yo'q.
 
 ---
 
@@ -30,9 +33,9 @@ Oldingi (iyun) ro'yxatdan tuzatilganlar: bot skanida `titul_id=None` (002 migrat
 
 9. **API `/attempts/scan` hali ham buzuq.** `attempts.py:62` `titul_id=1` placeholder (FK xato yoki noto'g'ri bog'lanish); `:57` fayl nomi `id(content)` — qayta ishlatiladigan qiymat, ustma-ust yozish; `:47` butun fayl o'qilib keyin hajm tekshiriladi (RAM DoS). `schemas/attempts.py:12` `titul_id: int` — pending/error attempt uchun `GET /attempts/{id}` 500 qaytaradi.
 
-10. **SaaS kvota/blok mantiqi hech qayerda chaqirilmaydi.** `services/subscriptions.py` dagi `consume_scan`, `check_group_limit`, `check_student_limit`, `ensure_subscription` — bot va API'da ishlatilmaydi. `scan.py:95-174` da ro'yxat/blok/kvota tekshiruvi yo'q: istalgan Telegram foydalanuvchisi (o'quvchi ham) skan yuboradi. `admin/users.py:457` "bot middleware `is_blocked` tekshiradi" deydi — bunday middleware yo'q, blok botda ishlamaydi. Yangi ustozlarga obuna yaratilmaydi (faqat 003 seed'dagilar). `last_seen_at` hech qachon yangilanmaydi.
+10. ✅ *(T-09 + T-17, 2026-09-16: ro'yxatsiz skan rad, titul egaligi worker'da, guruh/o'quvchi limiti botda, /start'da obuna, middleware ro'yxat+blok)* **SaaS kvota/blok mantiqi hech qayerda chaqirilmaydi.** `services/subscriptions.py` dagi `consume_scan`, `check_group_limit`, `check_student_limit`, `ensure_subscription` — bot va API'da ishlatilmaydi. `scan.py:95-174` da ro'yxat/blok/kvota tekshiruvi yo'q: istalgan Telegram foydalanuvchisi (o'quvchi ham) skan yuboradi. `admin/users.py:457` "bot middleware `is_blocked` tekshiradi" deydi — bunday middleware yo'q, blok botda ishlamaydi. Yangi ustozlarga obuna yaratilmaydi (faqat 003 seed'dagilar). `last_seen_at` hech qachon yangilanmaydi.
 
-11. **FSM handlerlari matn bo'lmagan xabarda yiqiladi.** `groups.py:95`, `students.py:70`, `tests.py:114,164` — `message.text.strip()` `F.text` filtrsiz. Holatda turib rasm/stiker yuborilsa `AttributeError`, javob yo'q, state tiqilib qoladi. Ustoz kalit kiritish holatida turib skan yuborsa ham shu.
+11. ✅ *(T-11, 2026-09-16)* **FSM handlerlari matn bo'lmagan xabarda yiqiladi.** `groups.py:95`, `students.py:70`, `tests.py:114,164` — `message.text.strip()` `F.text` filtrsiz. Holatda turib rasm/stiker yuborilsa `AttributeError`, javob yo'q, state tiqilib qoladi. Ustoz kalit kiritish holatida turib skan yuborsa ham shu.
 
 12. **5 variantli test aslida ishlamaydi.** `layout.py:30,37,44` `options` faqat `ABCD`; `options[:vcount]` 5 uchun ham 4 ta beradi. Bot 5 variantni tanlashga (`inline.py:100`) va kalitda `E` kiritishga ruxsat beradi, lekin PDF'da E doirasi chizilmaydi va OMR o'qimaydi → `E` javoblar doim xato.
 
@@ -42,9 +45,9 @@ Oldingi (iyun) ro'yxatdan tuzatilganlar: bot skanida `titul_id=None` (002 migrat
 
 15. **`omr_task` xato oqimi.** `tasks.py:370-388` istalgan xatoda foydalanuvchiga xabar yuborib **keyin** retry — 3 marta bir xil xabar; doimiy xatolar ham retry. `bubble_data`/`confidence` (003 ustunlari) attempt'ga yozilmaydi (`:330-341`) → admin OMR inspektori bo'sh bo'ladi.
 
-16. **Telegram HTML injection.** `parse_mode=HTML` bilan escape qilinmagan foydalanuvchi matni: `grading.py:99-100`, `groups.py:74,114`, `tests.py:124,229,304`, `results.py:137,181,282`, `start.py:63`, `tasks.py:170`, `admin/users.py:502` (blok sababi). `<b>` yoki `<` kiritilsa Telegram "can't parse entities" → handler yiqiladi.
+16. ✅ *(T-12, 2026-09-16)* **Telegram HTML injection.** `parse_mode=HTML` bilan escape qilinmagan foydalanuvchi matni: `grading.py:99-100`, `groups.py:74,114`, `tests.py:124,229,304`, `results.py:137,181,282`, `start.py:63`, `tasks.py:170`, `admin/users.py:502` (blok sababi). `<b>` yoki `<` kiritilsa Telegram "can't parse entities" → handler yiqiladi.
 
-17. **Excel/CSV formula injection.** `excel.py:136-146` va `history.py:168-177` — `=`, `+`, `-`, `@` bilan boshlangan F.I.Sh/test nomi hujayraga to'g'ridan-to'g'ri yoziladi. `results.py:358,377,396` fayl nomlari sanitizatsiyasiz (`/`, `"`).
+17. ✅ *(T-13, 2026-09-16)* **Excel/CSV formula injection.** `excel.py:136-146` va `history.py:168-177` — `=`, `+`, `-`, `@` bilan boshlangan F.I.Sh/test nomi hujayraga to'g'ridan-to'g'ri yoziladi. `results.py:358,377,396` fayl nomlari sanitizatsiyasiz (`/`, `"`).
 
 18. **Obuna muddati hech qachon tugamaydi.** `subscriptions.py:130-144` `get_active_subscription` `ends_at` ni tekshirmaydi, statusni `expired` ga o'tkazadigan joy yo'q → to'lov muddati o'tgan tarif cheksiz ishlaydi. `:86-91` `_next_period_end` kunni 28 ga qisqartiradi — davr har oy oldinga siljiydi. `:384` tarif almashganda `scans_used` ko'chib o'tadi.
 
@@ -64,11 +67,11 @@ Oldingi (iyun) ro'yxatdan tuzatilganlar: bot skanida `titul_id=None` (002 migrat
 
 24. **Qo'lda tuzatish nomuvofiq.** `attempts.py:101-106` `score` ni yangilab `percent`/`detail` ni qayta hisoblamaydi. `web_api.py:373-382` `corrected_answers` variant soniga tekshirilmaydi, `manual_override`/`reviewed_by_id`/`reviewed_at` to'ldirilmaydi.
 
-25. **O'lik/tugallanmagan UI.** `inline.py:152` `results:{test_id}` tugmasi uchun handler yo'q (aylanib turadi). `results.py:51` reply-keyboard matni hech qachon kelmaydi (`reply.py` ishlatilmaydi). `students.py:137` `link_telegram` chaqirilmaydi — dashboard doim "Ulanmagan".
+25. ✅ *(T-14, 2026-09-16; o'quvchini botga ulash oqimi — alohida reja)* **O'lik/tugallanmagan UI.** `inline.py:152` `results:{test_id}` tugmasi uchun handler yo'q (aylanib turadi). `results.py:51` reply-keyboard matni hech qachon kelmaydi (`reply.py` ishlatilmaydi). `students.py:137` `link_telegram` chaqirilmaydi — dashboard doim "Ulanmagan".
 
-26. **Foydalanuvchi ma'lumoti eskiradi.** `services/groups.py:16-31` ikkinchi `/start` da ism/username yangilanmaydi; callback orqali yaratilgan userlar `full_name=NULL`.
+26. ✅ *(T-15, 2026-09-16)* **Foydalanuvchi ma'lumoti eskiradi.** `services/groups.py:16-31` ikkinchi `/start` da ism/username yangilanmaydi; callback orqali yaratilgan userlar `full_name=NULL`.
 
-27. **`parse_key` takror raqamlarni indamay ustidan yozadi** (`services/tests.py:55-65`): "1-A 1-B 2-C" 2 savolli test uchun qabul qilinadi.
+27. ✅ *(T-16, 2026-09-16)* **`parse_key` takror raqamlarni indamay ustidan yozadi** (`services/tests.py:55-65`): "1-A 1-B 2-C" 2 savolli test uchun qabul qilinadi.
 
 28. **Timezone.** `web_api.py:56` naive `datetime.now()`; Celery `Asia/Tashkent` (`celery_app.py:24`), ilova UTC. "Bugungi skanlar" O'zbekiston kuni bo'yicha noto'g'ri.
 

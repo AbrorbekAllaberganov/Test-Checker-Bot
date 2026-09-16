@@ -1,0 +1,9 @@
+{
+  // Terminal ochilganda `.env` dagi o'zgaruvchilar terminalga ham yuklansin.
+  // Busiz Python kengaytmasi `.env` ni faqat debug/run konfiguratsiyasida
+  // ishlatadi va terminalda `python -c "..."` boshqa muhitni ko'radi.
+  "python.terminal.useEnvFile": true,
+
+  // Qaysi fayl o'qilishi (standart qiymat, aniqlik uchun yozib qo'yildi).
+  "python.envFile": "${workspaceFolder}/.env"
+}

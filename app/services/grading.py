@@ -9,6 +9,8 @@ import logging
 from dataclasses import dataclass
 from typing import Optional
 
+from app.services.telegram import escape
+
 log = logging.getLogger(__name__)
 
 
@@ -94,10 +96,10 @@ def format_result_message(
     test_title: str,
     student_name: str,
 ) -> str:
-    """Foydalanuvchiga yuboriladigan natija xabari."""
+    """Foydalanuvchiga yuboriladigan natija xabari (HTML; nomlar escape qilinadi)."""
     lines = [
-        f"📄 <b>Test:</b> {test_title}",
-        f"👤 <b>O'quvchi:</b> {student_name}\n",
+        f"📄 <b>Test:</b> {escape(test_title)}",
+        f"👤 <b>O'quvchi:</b> {escape(student_name)}\n",
         f"✅ <b>To'g'ri:</b> {grade_result.correct_count}/{grade_result.total} ({grade_result.percent}%)",
         f"❌ <b>Xato:</b> {grade_result.incorrect_count} ta",
         f"⚪️ <b>Belgilanmagan:</b> {grade_result.unmarked_count} ta",
@@ -150,8 +152,8 @@ def format_attempt_breakdown(
     unm_len = len(breakdown["unmarked"])
 
     lines = [
-        f"👤 <b>O'quvchi:</b> {student_name}",
-        f"📋 <b>Test:</b> {test_title}",
+        f"👤 <b>O'quvchi:</b> {escape(student_name)}",
+        f"📋 <b>Test:</b> {escape(test_title)}",
         f"📊 <b>Natija:</b> {score}/{total} ({round(100 * score / total, 1) if total > 0 else 0}%)\n",
     ]
 

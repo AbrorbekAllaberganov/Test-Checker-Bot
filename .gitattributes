@@ -1,0 +1,15 @@
+# Shell skriptlari HAR DOIM LF bilan saqlanadi va checkout qilinadi.
+# Windows'da CRLF bo'lib ketsa Linux konteynerda shebang buziladi:
+#   exec /usr/local/bin/docker-entrypoint.sh: no such file or directory
+*.sh text eol=lf
+
+# Docker va CI fayllari ham konteyner ichida o'qiladi.
+Dockerfile text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# Namuna/ignore fayllari: CRLF bo'lsa `.env` ga nusxalanganda qiymat
+# oxirida `\r` qolib ketishi mumkin.
+.dockerignore text eol=lf
+.gitignore text eol=lf
+.env.example text eol=lf

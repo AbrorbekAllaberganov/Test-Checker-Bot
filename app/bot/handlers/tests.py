@@ -27,27 +27,29 @@ from app.bot.keyboards.inline import (
 )
 from app.bot.states import TestCreate
 from app.core.db import get_session_factory
-from app.services.groups import get_group, get_groups_by_owner, get_or_create_user
-from app.services.tests import create_test, get_test, get_tests_by_group, parse_key
+from app.models.user import User
+from app.services.access import owned_group, owned_test
+from app.services.groups import get_groups_by_owner
+from app.services.telegram import escape
+from app.services.tests import create_test, get_tests_by_group, parse_key
 from app.services.titul import generate_tituls_for_test, get_tituls_by_test
 
 log = logging.getLogger(__name__)
 router = Router(name="tests")
 
-
-async def _owner_id(telegram_id: int) -> int:
-    factory = get_session_factory()
-    async with factory() as db:
-        user = await get_or_create_user(db, telegram_id)
-        await db.commit()
-        return user.id
+# Egalik: har `group:`/`test:` callback'i va FSM'dagi id'lar joriy ustozga
+# tegishli ekani `owned_group`/`owned_test` bilan tekshiriladi. Begona
+# obyekt → "topilmadi". Servislar ham `owner_id` bilan chaqiriladi
+# (ikki qatlam — handler unutsa ham servis himoya qiladi).
+# `db_user` — `AccessMiddleware` bergan bazadagi foydalanuvchi.
+# Bot default parse_mode=HTML — test nomi/xato matni `escape()` dan o'tadi.
 
 
 # ─── Testlar menyu (Inline callback) ──────────────────────────────────────────
 
 @router.callback_query(F.data == "menu_tests")
-async def list_tests_menu(call: CallbackQuery) -> None:
-    owner_id = await _owner_id(call.from_user.id)
+async def list_tests_menu(call: CallbackQuery, db_user: User) -> None:
+    owner_id = db_user.id
     factory = get_session_factory()
     async with factory() as db:
         groups = await get_groups_by_owner(db, owner_id)
@@ -69,11 +71,15 @@ async def list_tests_menu(call: CallbackQuery) -> None:
 
 
 @router.callback_query(F.data.startswith("list_tests:"))
-async def list_tests_for_group(call: CallbackQuery) -> None:
+async def list_tests_for_group(call: CallbackQuery, db_user: User) -> None:
     group_id = int(call.data.split(":")[1])
+    owner_id = db_user.id
     factory = get_session_factory()
     async with factory() as db:
-        tests = await get_tests_by_group(db, group_id)
+        if await owned_group(db, group_id, owner_id) is None:
+            await call.answer("Guruh topilmadi.", show_alert=True)
+            return
+        tests = await get_tests_by_group(db, group_id, owner_id=owner_id)
 
     if not tests:
         # Orqaga qaytish tugmasi
@@ -98,8 +104,16 @@ async def list_tests_for_group(call: CallbackQuery) -> None:
 # ─── Test yaratish FSM (Faqat inline tugmalar va bekor qilish) ─────────────────
 
 @router.callback_query(F.data.startswith("create_test:"))
-async def start_create_test(call: CallbackQuery, state: FSMContext) -> None:
+async def start_create_test(call: CallbackQuery, state: FSMContext, db_user: User) -> None:
     group_id = int(call.data.split(":")[1])
+    owner_id = db_user.id
+    factory = get_session_factory()
+    async with factory() as db:
+        group = await owned_group(db, group_id, owner_id)
+    if group is None:
+        await call.answer("Guruh topilmadi.", show_alert=True)
+        return
+
     await state.set_state(TestCreate.waiting_title)
     await state.update_data(group_id=group_id)
     await call.message.edit_text(
@@ -109,7 +123,7 @@ async def start_create_test(call: CallbackQuery, state: FSMContext) -> None:
     await call.answer()
 
 
-@router.message(TestCreate.waiting_title)
+@router.message(TestCreate.waiting_title, F.text)
 async def receive_test_title(message: Message, state: FSMContext) -> None:
     title = message.text.strip()
     if not title:
@@ -121,7 +135,7 @@ async def receive_test_title(message: Message, state: FSMContext) -> None:
     await state.update_data(title=title)
     await state.set_state(TestCreate.choosing_qcount)
     await message.answer(
-        f"✅ Test nomi: <b>{title}</b>\n\nSavollar sonini tanlang:",
+        f"✅ Test nomi: <b>{escape(title)}</b>\n\nSavollar sonini tanlang:",
         reply_markup=qcount_kb(),
         parse_mode="HTML",
     )
@@ -160,7 +174,7 @@ async def receive_vcount(call: CallbackQuery, state: FSMContext) -> None:
     await call.answer()
 
 
-@router.message(TestCreate.entering_key)
+@router.message(TestCreate.entering_key, F.text)
 async def receive_answer_key(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     qcount: int = data["qcount"]
@@ -170,8 +184,9 @@ async def receive_answer_key(message: Message, state: FSMContext) -> None:
     try:
         key = parse_key(message.text, qcount, options)
     except ValueError as e:
+        # Xato matnida foydalanuvchi kiritgan belgilar bo'lishi mumkin (`<`).
         await message.answer(
-            f"❌ Xatolik: {e}\n\nQayta yuboring:",
+            f"❌ Xatolik: {escape(e)}\n\nQayta yuboring:",
             reply_markup=cancel_inline_kb()
         )
         return
@@ -201,12 +216,24 @@ async def confirm_test_no(call: CallbackQuery, state: FSMContext) -> None:
 
 
 @router.callback_query(F.data == "confirm_test:yes", TestCreate.confirm)
-async def confirm_test_yes(call: CallbackQuery, state: FSMContext) -> None:
+async def confirm_test_yes(call: CallbackQuery, state: FSMContext, db_user: User) -> None:
     data = await state.get_data()
     group_id = data["group_id"]
+    owner_id = db_user.id
 
     factory = get_session_factory()
     async with factory() as db:
+        # FSM'dagi group_id qayta tekshiriladi — state Redis'da, uni
+        # o'rnatgan callback tekshiruvdan o'tgan bo'lsa ham guruh shu orada
+        # o'chirilgan bo'lishi mumkin.
+        if await owned_group(db, group_id, owner_id) is None:
+            await state.clear()
+            await call.message.edit_text(
+                "Guruh topilmadi. Bosh menyudan qaytadan boshlang.",
+                reply_markup=main_menu_inline_kb(),
+            )
+            await call.answer()
+            return
         test = await create_test(
             db,
             group_id=group_id,
@@ -226,7 +253,7 @@ async def confirm_test_yes(call: CallbackQuery, state: FSMContext) -> None:
     await state.update_data(test_id=test_id)
     
     await call.message.edit_text(
-        f"✅ <b>{test_title}</b> testi saqlandi!\n({qcount} ta savol)\n\n"
+        f"✅ <b>{escape(test_title)}</b> testi saqlandi!\n({qcount} ta savol)\n\n"
         "Javoblar varaqalarini (titullarni) hozir generatsiya qilaymi?",
         reply_markup=generate_tituls_kb(),
         parse_mode="HTML",
@@ -247,7 +274,7 @@ async def gen_tituls_later(call: CallbackQuery, state: FSMContext) -> None:
 
 
 @router.callback_query(F.data == "gen_tituls:all")
-async def gen_tituls_all(call: CallbackQuery, state: FSMContext, bot: Bot) -> None:
+async def gen_tituls_all(call: CallbackQuery, state: FSMContext, bot: Bot, db_user: User) -> None:
     data = await state.get_data()
     test_id: int = data.get("test_id", 0)
 
@@ -259,14 +286,17 @@ async def gen_tituls_all(call: CallbackQuery, state: FSMContext, bot: Bot) -> No
     log.info("Test (ID: %d) uchun titul generatsiya boshlandi.", test_id)
     await call.message.edit_text("⏳ Titullar tayyorlanmoqda... Tayyor bo'lgach har biri yuboriladi.")
 
+    owner_id = db_user.id
     factory = get_session_factory()
     try:
         async with factory() as db:
-            titul_ids = await generate_tituls_for_test(db, test_id)
+            # owner_id — test shu ustozniki ekani servisda tekshiriladi;
+            # begona test_id (soxta FSM) → ValueError("Test topilmadi").
+            titul_ids = await generate_tituls_for_test(db, test_id, owner_id=owner_id)
             await db.commit()
     except ValueError as e:
         log.error("Titul generatsiya qilishda xatolik (test_id=%d): %s", test_id, e)
-        await call.message.answer(f"❌ {e}")
+        await call.message.answer(f"❌ {escape(e)}")
         await call.answer()
         return
 
@@ -290,18 +320,19 @@ async def gen_tituls_all(call: CallbackQuery, state: FSMContext, bot: Bot) -> No
 # ─── Test boshqaruvi ─────────────────────────────────────────────────────────
 
 @router.callback_query(F.data.startswith("test:"))
-async def test_selected(call: CallbackQuery) -> None:
+async def test_selected(call: CallbackQuery, db_user: User) -> None:
     test_id = int(call.data.split(":")[1])
+    owner_id = db_user.id
     factory = get_session_factory()
     async with factory() as db:
-        test = await get_test(db, test_id)
+        test = await owned_test(db, test_id, owner_id)
 
     if test is None:
         await call.answer("Test topilmadi", show_alert=True)
         return
 
     await call.message.edit_text(
-        f"📝 <b>{test.title}</b>\n"
+        f"📝 <b>{escape(test.title)}</b>\n"
         f"Savollar soni: {test.question_count} ta\n"
         f"Variantlar soni: {test.variant_count} ta\n\n"
         f"Nima qilmoqchisiz?",
@@ -312,11 +343,15 @@ async def test_selected(call: CallbackQuery) -> None:
 
 
 @router.callback_query(F.data.startswith("tituls:"))
-async def show_tituls_menu(call: CallbackQuery, state: FSMContext) -> None:
+async def show_tituls_menu(call: CallbackQuery, state: FSMContext, db_user: User) -> None:
     test_id = int(call.data.split(":")[1])
+    owner_id = db_user.id
     factory = get_session_factory()
     async with factory() as db:
-        tituls = await get_tituls_by_test(db, test_id)
+        if await owned_test(db, test_id, owner_id) is None:
+            await call.answer("Test topilmadi.", show_alert=True)
+            return
+        tituls = await get_tituls_by_test(db, test_id, owner_id=owner_id)
 
     if not tituls:
         await state.update_data(test_id=test_id)
@@ -335,11 +370,13 @@ async def show_tituls_menu(call: CallbackQuery, state: FSMContext) -> None:
 
 
 @router.callback_query(F.data.startswith("tituls_send:single:"))
-async def send_tituls_single(call: CallbackQuery, bot: Bot) -> None:
+async def send_tituls_single(call: CallbackQuery, bot: Bot, db_user: User) -> None:
     test_id = int(call.data.split(":")[-1])
+    owner_id = db_user.id
     factory = get_session_factory()
     async with factory() as db:
-        tituls = await get_tituls_by_test(db, test_id)
+        # owner_id — begona test uchun bo'sh ro'yxat qaytadi (PDF'da F.I.Sh + QR bor).
+        tituls = await get_tituls_by_test(db, test_id, owner_id=owner_id)
 
     ready = [t for t in tituls if t.pdf_path and Path(t.pdf_path).exists()]
     if not ready:
@@ -353,7 +390,7 @@ async def send_tituls_single(call: CallbackQuery, bot: Bot) -> None:
             await bot.send_document(
                 call.message.chat.id,
                 FSInputFile(t.pdf_path, filename=fname),
-                caption=f"📄 {fname}"
+                caption=f"📄 {escape(fname)}"
             )
         except Exception as e:
             log.error("Titul yuborishda xato (%s): %s", t.pdf_path, e)
@@ -361,11 +398,12 @@ async def send_tituls_single(call: CallbackQuery, bot: Bot) -> None:
 
 
 @router.callback_query(F.data.startswith("tituls_send:zip:"))
-async def send_tituls_zip(call: CallbackQuery, bot: Bot) -> None:
+async def send_tituls_zip(call: CallbackQuery, bot: Bot, db_user: User) -> None:
     test_id = int(call.data.split(":")[-1])
+    owner_id = db_user.id
     factory = get_session_factory()
     async with factory() as db:
-        tituls = await get_tituls_by_test(db, test_id)
+        tituls = await get_tituls_by_test(db, test_id, owner_id=owner_id)
 
     ready = [t for t in tituls if t.pdf_path and Path(t.pdf_path).exists()]
     if not ready:

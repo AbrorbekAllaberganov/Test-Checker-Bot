@@ -1,12 +1,38 @@
 # Docker build kontekstidan chiqariladigan narsalar.
+
+# ── SIRLAR ────────────────────────────────────────────────────────────
+# `.env` HECH QACHON image ichiga tushmasligi kerak: sozlamalar ishga
+# tushishda `env_file` orqali beriladi. Image'ga tushsa, uni olgan har
+# kim bot tokeni va baza parolini o'qib oladi.
+.env
+.env.*
+!.env.example
+admin-ui/.env
+admin-ui/.env.*
+!admin-ui/.env.example
+*.pem
+*.key
+
+# ── Yiriklar va build artefaktlari ────────────────────────────────────
 # admin-ui/node_modules juda katta — u image ichida qaytadan o'rnatiladi.
 admin-ui/node_modules
 admin-ui/dist
 .git
+.github
 __pycache__
 *.py[cod]
 .pytest_cache
 .venv
+venv
 scratch
 *.log
 calibration_*.png
+
+# ── Kodga aloqasi yo'q fayllar ────────────────────────────────────────
+docs
+*.md
+!README.md
+.gitattributes
+.gitignore
+.vscode
+.idea

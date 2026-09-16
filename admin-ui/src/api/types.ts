@@ -313,6 +313,45 @@ export interface TestListItem {
   avg_percent: number | null
 }
 
+/**
+ * O'quvchiga berilgan varaq va uning natijasi.
+ * `attempt_id === null` — varaq chiqarilgan, lekin hali skanlanmagan.
+ */
+export interface StudentAttemptItem {
+  titul_id: number
+  titul_created_at: string
+  test_id: number
+  test_title: string
+  question_count: number
+  variant_count: number
+  attempt_id: number | null
+  score: number | null
+  total: number | null
+  percent: number | null
+  needs_review: boolean
+  manual_override: boolean
+  confidence: number | null
+  status: ScanStatus | null
+  created_at: string | null
+}
+
+export interface StudentDetail {
+  id: number
+  full_name: string
+  telegram_id: number | null
+  group_id: number
+  group_name: string | null
+  owner_id: number | null
+  owner_name: string | null
+  created_at: string
+  tituls_count: number
+  attempts_count: number
+  graded_count: number
+  avg_percent: number | null
+  best_percent: number | null
+  attempts: StudentAttemptItem[]
+}
+
 export interface GroupDetail {
   id: number
   name: string

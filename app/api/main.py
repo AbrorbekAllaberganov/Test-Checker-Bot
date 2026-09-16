@@ -3,6 +3,7 @@ app/api/main.py — FastAPI application.
 """
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -13,7 +14,30 @@ from fastapi.staticfiles import StaticFiles
 
 from app.core.config import get_settings
 from app.core.logging import setup_logging
+from app.core.security import (
+    InsecureSecretError,
+    assert_internal_key_is_safe,
+    assert_secret_is_safe,
+)
 from app.api.routes import groups, tests, tituls, attempts, results, web_api
+
+log = logging.getLogger(__name__)
+
+
+def _warn_about_insecure_secrets() -> None:
+    """
+    Namunaviy kalitlar haqida ishga tushishda ogohlantiradi.
+
+    Ataylab YIQITMAYDI: `SECRET_KEY` faqat admin panelga, `INTERNAL_API_KEY`
+    faqat `/attempts/*` ga ta'sir qiladi — ularsiz ham bot va Mini App
+    ishlashi kerak. Himoya baribir kuchda: tegishli endpointlar 503
+    qaytaradi (core/security.py).
+    """
+    for check in (assert_secret_is_safe, assert_internal_key_is_safe):
+        try:
+            check()
+        except InsecureSecretError as exc:
+            log.error("XAVFSIZLIK OGOHLANTIRISHI: %s", exc)
 
 
 @asynccontextmanager
@@ -22,6 +46,7 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     setup_logging()
     settings.ensure_dirs()
+    _warn_about_insecure_secrets()
     yield
 
 
@@ -58,10 +83,12 @@ def create_app() -> FastAPI:
             allow_headers=["*"],
         )
 
-    # Static file mounting
-    app.mount("/static/pdfs", StaticFiles(directory=str(settings.pdf_output_dir)), name="pdfs")
-    app.mount("/static/debug", StaticFiles(directory=str(settings.debug_output_dir)), name="debug")
-    app.mount("/static/uploads", StaticFiles(directory=str(settings.temp_dir)), name="uploads")
+    # `/static/pdfs|debug|uploads` mount'lari ATAYLAB YO'Q (weaknesses.md №4):
+    # ular autentifikatsiyasiz edi va fayl nomlari ketma-ket ID'li bo'lgani
+    # uchun barcha o'quvchilar titullarini (F.I.Sh + QR) enumeratsiya qilib
+    # olish mumkin edi. Skan suratlari endi egalik tekshiruvli endpointlar
+    # orqali beriladi: /api/web/attempts/{id}/file/{kind} (Mini App) va
+    # /api/admin/scans/{id}/file/{kind} (admin). PDF'lar faqat bot orqali.
 
     # Routerlarni ulash
     from app.api.admin import admin_router

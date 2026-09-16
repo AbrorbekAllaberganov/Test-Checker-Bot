@@ -62,6 +62,10 @@ def parse_key(
                     f"Noto'g'ri javob harfi: {letter!r}. "
                     f"Ruxsat etilganlar: {sorted(allowed)}"
                 )
+            # Takror raqam indamay ustidan yozilmasin: "1-A 1-B 2-C" 2 savolli
+            # test uchun "to'g'ri" bo'lib qolardi (weaknesses №27).
+            if str(num) in result:
+                raise ValueError(f"{num}-savol ikki marta kiritilgan.")
             result[str(num)] = letter
     else:
         # Format 1 — ketma-ket harflar (probel/qator/vergul ajratadi yoki yo'q)
@@ -112,12 +116,23 @@ async def create_test(
     return test
 
 
-async def get_tests_by_group(db: AsyncSession, group_id: int) -> list[Test]:
-    result = await db.execute(
-        select(Test)
-        .where(Test.group_id == group_id)
-        .order_by(Test.created_at.desc())
-    )
+async def get_tests_by_group(
+    db: AsyncSession, group_id: int, *, owner_id: Optional[int]
+) -> list[Test]:
+    """
+    Guruhdagi testlar.
+
+    `owner_id` MAJBURIY parametr: bot va Mini App ustoz id'sini beradi va
+    faqat o'z guruhini ko'radi. Ichki API va admin panel ataylab `None`
+    beradi (ular tenant'siz) — bu qaror kodda ochiq ko'rinib turishi kerak,
+    shu sababli standart qiymat yo'q.
+    """
+    stmt = select(Test).where(Test.group_id == group_id)
+    if owner_id is not None:
+        from app.services.access import owner_filter_for_tests
+
+        stmt = owner_filter_for_tests(stmt, owner_id)
+    result = await db.execute(stmt.order_by(Test.created_at.desc()))
     return list(result.scalars().all())
 
 

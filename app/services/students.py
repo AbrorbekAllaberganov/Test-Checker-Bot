@@ -33,14 +33,21 @@ async def add_students(
 
 
 async def get_students_by_group(
-    db: AsyncSession, group_id: int
+    db: AsyncSession, group_id: int, *, owner_id: Optional[int]
 ) -> list[Student]:
-    """Guruhdagi barcha o'quvchilarni olish."""
-    result = await db.execute(
-        select(Student)
-        .where(Student.group_id == group_id)
-        .order_by(Student.full_name)
-    )
+    """
+    Guruhdagi barcha o'quvchilar.
+
+    `owner_id` majburiy: ustoz id'si berilsa faqat o'z guruhi; `None` —
+    tenant'siz chaqiruv (ichki API, admin, worker). Standart qiymat yo'q —
+    chaqiruvchi tanlovini ochiq yozsin.
+    """
+    stmt = select(Student).where(Student.group_id == group_id)
+    if owner_id is not None:
+        from app.services.access import owner_filter_for_students
+
+        stmt = owner_filter_for_students(stmt, owner_id)
+    result = await db.execute(stmt.order_by(Student.full_name))
     return list(result.scalars().all())
 
 

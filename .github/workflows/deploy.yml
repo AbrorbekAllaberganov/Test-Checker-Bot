@@ -4,10 +4,109 @@ on:
   push:
     branches:
       - main  # deploy triggering branch
+  pull_request:
+    branches:
+      - main  # PR'da faqat `test` job ishlaydi, deploy qilinmaydi
 
 jobs:
+  # ────────────────────────────────────────────────────────────────────
+  # 1. Testlar — deploy'dan OLDIN. Yiqilsa serverga hech narsa chiqmaydi.
+  #
+  # Testlar loyihaning O'Z Docker image'i ichida ishlaydi: shunda CI
+  # `Dockerfile` va `docker-compose.yml` ni ham tekshiradi. Serverda
+  # build paytida chiqadigan xato bu yerda, deploy'gacha ko'rinadi.
+  # ────────────────────────────────────────────────────────────────────
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Sirlarni tekshirish (git'da token qolmaganini)
+        run: |
+          # FAQAT git kuzatadigan fayllar tekshiriladi — `.env` (gitignore'da),
+          # node_modules va build natijalari o'z-o'zidan chetda qoladi.
+          # Telegram bot tokeni ko'rinishi: <8+ raqam>:<35 belgi>.
+          #
+          # `xargs` chiqish kodiga tayanmaymiz (u bir nechta partiyada
+          # chalkashadi) — natija matni bo'sh emasligiga qaraymiz.
+          matches="$(git ls-files -z | xargs -0 grep -InE '[0-9]{8,}:[A-Za-z0-9_-]{35}' || true)"
+          if [ -n "$matches" ]; then
+            echo "$matches"
+            echo "::error::Telegram bot tokeniga o'xshash satr topildi. Sirni .env ga ko'chiring va BotFather orqali revoke qiling."
+            exit 1
+          fi
+          echo "Token topilmadi — toza."
+
+      - name: CI uchun .env yaratish
+        run: |
+          # Bular FAQAT CI uchun soxta qiymatlar — hech qayerda ishlatilmaydi.
+          # Testlar konteyner ICHIDA ishlaydi, shu sababli yo'llar prod bilan
+          # bir xil (/data/...) — ular image'da mavjud va appuser'ga tegishli.
+          # LOKI_URL bo'sh: CI'da Loki yo'q, aks holda har log yozuvi kutardi.
+          cat > .env <<'ENVEOF'
+          BOT_TOKEN=ci-fake-bot-token-not-real
+          BOT_USERNAME=ci_test_bot
+          WEB_APP_URL=
+          DATABASE_URL=postgresql+asyncpg://omruser:ci_test_parol@postgres:5432/omrdb
+          SYNC_DATABASE_URL=postgresql+psycopg2://omruser:ci_test_parol@postgres:5432/omrdb
+          REDIS_PASSWORD=ci_test_redis_parol
+          REDIS_URL=redis://:ci_test_redis_parol@redis:6379/0
+          ADMIN_TELEGRAM_IDS=
+          INTERNAL_API_KEY=ci0123456789abcdef0123456789abcdef0123456789abcdef
+          SECRET_KEY=ci0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcd
+          POSTGRES_USER=omruser
+          POSTGRES_PASSWORD=ci_test_parol
+          POSTGRES_DB=omrdb
+          GRAFANA_ADMIN_PASSWORD=ci_test_grafana_parol
+          PDF_OUTPUT_DIR=/data/pdfs
+          DEBUG_OUTPUT_DIR=/data/debug
+          TEMP_DIR=/tmp/omr_uploads
+          LOKI_URL=
+          INSTALL_DEV=true
+          ENVEOF
+
+      - name: Image yig'ish (Dockerfile tekshiruvi)
+        run: docker compose build api
+
+      - name: Baza va Redis'ni ko'tarish
+        run: docker compose up -d postgres redis
+
+      - name: Migratsiyalar
+        run: docker compose run --rm api alembic upgrade head
+
+      - name: Pytest
+        run: docker compose run --rm api pytest app/tests -q
+
+      # Docker build ichida `tsc -b && vite build` allaqachon ishlaydi, lekin
+      # `typecheck` (tsc --noEmit) alohida — xato bo'lsa sabab aniq ko'rinadi.
+      # Node versiyasi Dockerfile'dagi bilan bir xil bo'lishi kerak.
+      - name: Node (admin panel uchun)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: admin-ui/package-lock.json
+
+      - name: Admin panel (typecheck + build)
+        working-directory: admin-ui
+        run: |
+          npm ci --no-audit --no-fund
+          npm run typecheck
+          npm run build
+
+      - name: Tozalash
+        if: always()
+        run: docker compose down -v --remove-orphans
+
+  # ────────────────────────────────────────────────────────────────────
+  # 2. Deploy — faqat main'ga push bo'lganda va testlar o'tgach.
+  # ────────────────────────────────────────────────────────────────────
   deploy:
     runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'push'
 
     steps:
       - name: Checkout code
@@ -20,13 +119,13 @@ jobs:
           token: ${{ secrets.TELEGRAM_BOT_TOKEN_DEPLOY }}
           message: |
             🚀 *OMR Test Bot: Deploy boshlandi!*
-            
+
             *Repo:* ${{ github.repository }}
             *Branch:* `${{ github.ref_name }}`
             *Muallif:* ${{ github.actor }}
             *Commit habari:*
             `${{ github.event.head_commit.message }}`
-            
+
             *Workflow:* [Click to View](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
           format: markdown
 
@@ -38,19 +137,46 @@ jobs:
           key: ${{ secrets.SERVER_SSH_KEY }}
           port: ${{ secrets.SERVER_PORT || 22 }}
           script: |
+            set -e
+
             # 1. Project directoryga o'tish (Serverdagi loyiha yo'lini kiriting)
             cd /var/www/omr-test-bot
-            
+
+            # Compose v2 (docker compose) yoki v1 (docker-compose) — qaysi biri bo'lsa.
+            if docker compose version >/dev/null 2>&1; then
+              DC="docker compose"
+            else
+              DC="docker-compose"
+            fi
+            echo "Compose buyrug'i: $DC"
+
             # 2. Eng so'nggi kodni olish
             git pull origin main
-            
-            # 3. Yangilangan Docker servicelarni qayta build va run qilish (downtimesiz)
-            docker-compose up -d --build api bot worker
-            
-            # 4. DB migratsiyalarni ishga tushirish
-            docker-compose exec -T api alembic upgrade head
-            
-            # 5. Disk to'lib qolmasligi uchun eski keraksiz docker imagelarni tozalash
+
+            # 3. Yangi image yig'ish (HAMMA servis: api, bot, worker bitta
+            #    Dockerfile'dan, lekin alohida image — bittasini yig'ish
+            #    qolganlarini eski kodda qoldiradi).
+            $DC build
+
+            # 4. Baza va Redis'ni ko'tarish (birinchi deployda hali yo'q).
+            $DC up -d postgres redis
+
+            # 5. MIGRATSIYA — konteynerlarni yangilashdan OLDIN.
+            #    Sabab: yangi kod yangi ustunlarni SELECT qiladi. Avval
+            #    konteyner ko'tarilsa, migratsiya tugaguncha bot ham, API
+            #    ham yiqilib turadi. Ustun QO'SHADIGAN migratsiya eski kod
+            #    bilan mos, shuning uchun bu tartib downtime bermaydi.
+            #    (Ustun O'CHIRADIGAN migratsiya bo'lsa ikki bosqichli
+            #     deploy kerak — docs/08_ADMIN_PANEL.md ga qarang.)
+            $DC run --rm api alembic upgrade head
+
+            # 6. Ilova konteynerlarini yangi kodga o'tkazish.
+            $DC up -d api bot worker
+
+            # 7. Holatni ko'rsatish (log'da ko'rinib tursin).
+            $DC ps
+
+            # 8. Disk to'lib qolmasligi uchun eski keraksiz imagelarni tozalash
             docker image prune -f
 
       - name: Send Telegram notification on success
@@ -61,11 +187,11 @@ jobs:
           token: ${{ secrets.TELEGRAM_BOT_TOKEN_DEPLOY }}
           message: |
             ✅ *OMR Test Bot: Deploy muvaffaqiyatli yakunlandi!* 🎉
-            
+
             *Repo:* ${{ github.repository }}
             *Branch:* `${{ github.ref_name }}`
             *Commit:* `${{ github.sha }}`
-            
+
             *Workflow:* [Click to View](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
           format: markdown
 
@@ -77,10 +203,10 @@ jobs:
           token: ${{ secrets.TELEGRAM_BOT_TOKEN_DEPLOY }}
           message: |
             ❌ *OMR Test Bot: Deployda xatolik yuz berdi!* ⚠️
-            
+
             *Repo:* ${{ github.repository }}
             *Branch:* `${{ github.ref_name }}`
             *Commit:* `${{ github.sha }}`
-            
+
             *Workflow:* [Click to View](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
           format: markdown

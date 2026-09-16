@@ -499,7 +499,7 @@ async def set_block_state(
         if body.blocked:
             text = "⛔️ <b>Hisobingiz vaqtincha cheklandi.</b>"
             if body.reason:
-                text += f"\n\nSabab: {body.reason}"
+                text += f"\n\nSabab: {escape(body.reason)}"
             text += "\n\nSavollar bo'lsa qo'llab-quvvatlash xizmatiga murojaat qiling."
         else:
             text = "✅ <b>Hisobingiz qayta faollashtirildi.</b>\n\nBotdan foydalanishingiz mumkin."

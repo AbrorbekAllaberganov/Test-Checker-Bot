@@ -82,3 +82,31 @@ class TestGrade:
         detected = dict(key)
         result = grade(detected, key)
         assert result.score == 90
+
+
+class TestHtmlEscape:
+    """Weaknesses №16 — nomlar Telegram HTML'iga escape'siz tushmasin."""
+
+    def test_result_message_escapes_names(self):
+        from app.services.grading import format_result_message
+
+        key = _make_key(4)
+        gr = grade(_make_detected(key, set()), key)
+        msg = format_result_message(gr, test_title="<b>x</b>", student_name="A & B")
+        assert "<b>x</b>" not in msg
+        assert "&lt;b&gt;x&lt;/b&gt;" in msg
+        assert "A &amp; B" in msg
+
+    def test_breakdown_escapes_names(self):
+        from app.services.grading import format_attempt_breakdown
+
+        msg = format_attempt_breakdown(
+            detail={"1": {"got": "A", "key": "A", "ok": True}},
+            student_name="<i>Ali</i>",
+            test_title="T<1>",
+            score=1,
+            total=1,
+        )
+        assert "<i>Ali</i>" not in msg
+        assert "&lt;i&gt;Ali&lt;/i&gt;" in msg
+        assert "T&lt;1&gt;" in msg

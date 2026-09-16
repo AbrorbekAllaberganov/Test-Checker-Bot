@@ -14,9 +14,23 @@ import { Input } from '@/components/ui/input'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useDebounce } from '@/hooks/useDebounce'
 import { formatDate, formatNumber, formatPercent } from '@/lib/format'
+import { GroupDetailDialog } from './GroupDetailDialog'
+import { StudentDetailDialog } from './StudentDetailDialog'
 import { TestDetailDialog } from './TestDetailDialog'
 
 const PAGE_SIZE = 25
+
+/**
+ * Drill-down zanjiri: guruh → o'quvchi → test (va test → o'quvchi).
+ *
+ * Har bosqichda faqat zanjir OXIRGI tugunining modali ochiq bo'ladi —
+ * modallar ichma-ich ochilmaydi. Shu sababli holat stack ko'rinishida:
+ * "Orqaga" bitta tugunni olib tashlaydi, "Yopish" zanjirni tozalaydi.
+ */
+type DrillNode =
+  | { kind: 'group'; id: number }
+  | { kind: 'student'; id: number }
+  | { kind: 'test'; id: number }
 
 async function exportUrl(url: string, name: string) {
   try {
@@ -32,7 +46,16 @@ export function ExplorerPage() {
   const [tab, setTab] = useState('groups')
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
-  const [selectedTestId, setSelectedTestId] = useState<number | null>(null)
+  const [drill, setDrill] = useState<DrillNode[]>([])
+
+  const current = drill.length > 0 ? drill[drill.length - 1] : null
+  const push = (node: DrillNode) => setDrill((stack) => [...stack, node])
+  const back = () => setDrill((stack) => stack.slice(0, -1))
+  const close = () => setDrill([])
+  const onBack = drill.length > 1 ? back : undefined
+
+  const idFor = (kind: DrillNode['kind']) =>
+    current?.kind === kind ? current.id : null
 
   const debouncedSearch = useDebounce(search)
   const commonParams = {
@@ -296,6 +319,7 @@ export function ExplorerPage() {
             meta={groups.data?.meta}
             isLoading={groups.isLoading}
             onPageChange={setPage}
+            onRowClick={(row) => push({ kind: 'group', id: row.id })}
             emptyMessage="Guruh topilmadi"
           />
         </TabsContent>
@@ -307,6 +331,7 @@ export function ExplorerPage() {
             meta={students.data?.meta}
             isLoading={students.isLoading}
             onPageChange={setPage}
+            onRowClick={(row) => push({ kind: 'student', id: row.id })}
             emptyMessage="O'quvchi topilmadi"
           />
         </TabsContent>
@@ -318,15 +343,32 @@ export function ExplorerPage() {
             meta={tests.data?.meta}
             isLoading={tests.isLoading}
             onPageChange={setPage}
-            onRowClick={(row) => setSelectedTestId(row.id)}
+            onRowClick={(row) => push({ kind: 'test', id: row.id })}
             emptyMessage="Test topilmadi"
           />
         </TabsContent>
       </Tabs>
 
+      <GroupDetailDialog
+        groupId={idFor('group')}
+        onClose={close}
+        onBack={onBack}
+        onOpenStudent={(id) => push({ kind: 'student', id })}
+        onOpenTest={(id) => push({ kind: 'test', id })}
+      />
+
+      <StudentDetailDialog
+        studentId={idFor('student')}
+        onClose={close}
+        onBack={onBack}
+        onOpenTest={(id) => push({ kind: 'test', id })}
+      />
+
       <TestDetailDialog
-        testId={selectedTestId}
-        onClose={() => setSelectedTestId(null)}
+        testId={idFor('test')}
+        onClose={close}
+        onBack={onBack}
+        onOpenStudent={(id) => push({ kind: 'student', id })}
       />
     </div>
   )

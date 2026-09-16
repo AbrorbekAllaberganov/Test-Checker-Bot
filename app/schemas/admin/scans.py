@@ -88,12 +88,16 @@ class OmrInspectorOut(BaseModel):
     question_count: int = 0
     variant_letters: list[str] = Field(default_factory=list)
 
-    # Rasmlar — static mount orqali beriladigan nisbiy URL'lar.
+    # Rasmlar — admin auth talab qiladigan nisbiy URL'lar. Frontend ularni
+    # `<img src>` bilan emas, Authorization header'li so'rov + blob URL
+    # bilan ko'rsatadi.
     source_url: Optional[str] = Field(
-        default=None, description="Asl yuklangan rasm (/static/uploads/...)"
+        default=None,
+        description="Asl yuklangan rasm (/api/admin/scans/{id}/file/source)",
     )
     debug_url: Optional[str] = Field(
-        default=None, description="OMR annotatsiyalangan rasm (/static/debug/...)"
+        default=None,
+        description="OMR annotatsiyalangan rasm (/api/admin/scans/{id}/file/debug)",
     )
 
     questions: list[ScanQuestionRow] = Field(default_factory=list)

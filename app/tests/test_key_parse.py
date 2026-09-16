@@ -76,6 +76,11 @@ class TestParseKeyFormat2:
         with pytest.raises(ValueError):
             parse_key(text, 40)
 
+    def test_duplicate_number_rejected(self):
+        # "1-A 1-B 2-C" — 2 savolli test uchun oldin indamay qabul qilinardi.
+        with pytest.raises(ValueError, match="ikki marta"):
+            parse_key("1-A 1-B 2-C", 2)
+
 
 class TestParseKeyVariants:
     def test_5_options(self):

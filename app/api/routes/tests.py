@@ -41,7 +41,8 @@ async def create_test(
 
 @router.get("/groups/{group_id}", response_model=list[TestOut])
 async def list_tests(group_id: int, db: AsyncSession = Depends(get_db)):
-    return await test_svc.get_tests_by_group(db, group_id)
+    # Ichki API (X-Internal-Key) — tenant'siz, shu sababli owner_id=None.
+    return await test_svc.get_tests_by_group(db, group_id, owner_id=None)
 
 
 @router.get("/{test_id}", response_model=TestOut)

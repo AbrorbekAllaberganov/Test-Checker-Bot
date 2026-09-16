@@ -76,4 +76,5 @@ async def add_students(
 
 @router.get("/{group_id}/students", response_model=list[StudentOut])
 async def list_students(group_id: int, db: AsyncSession = Depends(get_db)):
-    return await student_svc.get_students_by_group(db, group_id)
+    # Ichki API (X-Internal-Key) — tenant'siz, shu sababli owner_id=None.
+    return await student_svc.get_students_by_group(db, group_id, owner_id=None)

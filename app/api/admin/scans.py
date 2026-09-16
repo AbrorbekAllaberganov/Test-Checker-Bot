@@ -17,10 +17,9 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -42,6 +41,12 @@ from app.schemas.admin.scans import (
     ScanQuestionRow,
 )
 from app.services import audit as audit_svc
+from app.services.attempt_files import (
+    FileKind,
+    attempt_file_path,
+    file_response_for,
+    resolve_attempt_file,
+)
 from app.services.grading import grade
 from app.services.telegram import TelegramSendError, escape, send_message
 
@@ -52,14 +57,15 @@ router = APIRouter(prefix="/scans", tags=["admin:scans"])
 LETTERS = "ABCDE"
 
 
-def _static_url(filepath: Optional[str], prefix: str) -> Optional[str]:
-    """Lokal fayl yo'li → static mount URL'i."""
-    if not filepath:
+def _file_url(attempt_id: int, kind: FileKind, filepath: Optional[str]) -> Optional[str]:
+    """
+    Fayl mavjud bo'lsa — admin auth'li endpoint URL'i, aks holda None.
+
+    Ilgari `/static/uploads/<nom>` qaytarilardi — autentifikatsiyasiz.
+    """
+    if resolve_attempt_file(filepath) is None:
         return None
-    try:
-        return f"{prefix}/{Path(filepath).name}"
-    except Exception:  # noqa: BLE001
-        return None
+    return f"/api/admin/scans/{attempt_id}/file/{kind}"
 
 
 def _base_scan_query() -> Select:
@@ -359,10 +365,35 @@ async def inspect_scan(attempt_id: int, db: DbDep) -> OmrInspectorOut:
         owner_telegram_id=owner.telegram_id if owner else None,
         question_count=question_count,
         variant_letters=list(LETTERS[:variant_count]),
-        source_url=_static_url(attempt.source_file, "/static/uploads"),
-        debug_url=_static_url(attempt.debug_file, "/static/debug"),
+        source_url=_file_url(attempt.id, "source", attempt.source_file),
+        debug_url=_file_url(attempt.id, "debug", attempt.debug_file),
         questions=_build_questions(attempt, test),
     )
+
+
+@router.get(
+    "/{attempt_id}/file/{kind}",
+    dependencies=[Depends(require_analyst)],
+    response_class=Response,
+)
+async def scan_file(attempt_id: int, kind: FileKind, db: DbDep) -> Response:
+    """
+    Skan surati (`source`) yoki OMR annotatsiyasi (`debug`).
+
+    Frontend `<img src>` bilan emas, `Authorization` header'li so'rov +
+    blob URL bilan ko'rsatadi (OmrInspectorModal). Fayl faqat ruxsat
+    etilgan papkalardan beriladi (`services/attempt_files.py`).
+    """
+    attempt = (
+        await db.execute(select(Attempt).where(Attempt.id == attempt_id))
+    ).scalar_one_or_none()
+    if attempt is None:
+        raise HTTPException(status_code=404, detail="Skan topilmadi")
+
+    path = attempt_file_path(attempt, kind)
+    if path is None:
+        raise HTTPException(status_code=404, detail="Fayl topilmadi")
+    return file_response_for(path)
 
 
 @router.post("/{attempt_id}/override", response_model=OmrInspectorOut)

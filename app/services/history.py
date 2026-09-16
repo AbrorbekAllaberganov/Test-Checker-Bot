@@ -20,6 +20,7 @@ from app.models.attempt import Attempt
 from app.models.student import Student
 from app.models.test import Test
 from app.models.titul import Titul
+from app.services.excel import safe_cell
 
 log = logging.getLogger(__name__)
 
@@ -165,10 +166,12 @@ def results_to_csv(results: list[TestResultItem], test_title: str) -> bytes:
     writer = csv.writer(buf)
     writer.writerow(["#", "F.I.Sh", "To'g'ri", "Jami", "%", "Ko'rish kerak", "Sana"])
 
+    # CSV ham Excel'da ochiladi — F.I.Sh `=`/`+`/`-`/`@` bilan boshlansa
+    # formula bo'lib ketmasin.
     for i, r in enumerate(results, 1):
         writer.writerow([
             i,
-            r.student_name,
+            safe_cell(r.student_name),
             r.score,
             r.total,
             r.percent,

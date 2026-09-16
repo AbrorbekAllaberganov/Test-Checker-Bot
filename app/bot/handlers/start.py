@@ -13,7 +13,9 @@ from aiogram.types import Message, CallbackQuery
 from app.bot.keyboards.inline import main_menu_inline_kb, back_to_main_kb
 from app.core.config import get_settings
 from app.core.db import get_session_factory
-from app.services.groups import get_or_create_user
+from app.models.user import User
+from app.services.subscriptions import ensure_subscription
+from app.services.telegram import escape
 
 router = Router(name="start")
 log = logging.getLogger(__name__)
@@ -45,22 +47,28 @@ HELP_TEXT = (
 
 
 @router.message(CommandStart())
-async def cmd_start(message: Message, state: FSMContext) -> None:
-    """Foydalanuvchini ro'yxatdan o'tkazish va asosiy menyuni ko'rsatish."""
+async def cmd_start(message: Message, state: FSMContext, db_user: User) -> None:
+    """
+    Asosiy menyuni ko'rsatish.
+
+    Foydalanuvchi bazaga `AccessMiddleware` da yozilgan (`db_user`). Bu yerda
+    unga default tarifda obuna ochamiz — admin panelda yangi ustoz darhol
+    FREE tarif bilan ko'rinadi (weaknesses №10).
+    """
     await state.clear()
 
     factory = get_session_factory()
     async with factory() as db:
-        await get_or_create_user(
-            db,
-            telegram_id=message.from_user.id,
-            full_name=message.from_user.full_name,
-            username=message.from_user.username,
-        )
-        await db.commit()
+        try:
+            await ensure_subscription(db, db_user.id)
+            await db.commit()
+        except RuntimeError as exc:
+            # 003 seed yo'q (tarif jadvali bo'sh) — foydalanuvchini to'xtatmaymiz.
+            log.error("Obuna yaratilmadi (user=%s): %s", db_user.id, exc)
+            await db.rollback()
 
     await message.answer(
-        f"👋 Salom, <b>{message.from_user.first_name}</b>!\n\n"
+        f"👋 Salom, <b>{escape(message.from_user.first_name)}</b>!\n\n"
         "OMR Test Bot'ga xush kelibsiz.\n"
         "Quyidagi inline menyu orqali botni boshqaring:",
         reply_markup=main_menu_inline_kb(web_app_url=get_settings().web_app_url or None),

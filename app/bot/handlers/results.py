@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import logging
 from aiogram import F, Router
-from aiogram.types import BufferedInputFile, CallbackQuery, Message
+from aiogram.types import BufferedInputFile, CallbackQuery
 
 from app.bot.keyboards.inline import (
     main_menu_inline_kb,
@@ -18,76 +18,44 @@ from app.bot.keyboards.inline import (
     back_to_student_kb,
 )
 from app.core.db import get_session_factory
-from app.services.groups import get_groups_by_owner, get_group, get_or_create_user
-from app.services.tests import get_test, get_tests_by_group
+from app.models.user import User
+from app.services.access import owned_attempt, owned_group, owned_student, owned_test
+from app.services.groups import get_groups_by_owner
+from app.services.telegram import escape
+from app.services.tests import get_tests_by_group
 from app.services.history import test_stats
 from app.services.grading import format_attempt_breakdown
 from app.models.attempt import Attempt
 from app.models.student import Student
 from app.models.test import Test
 from app.models.titul import Titul
-from app.models.group import Group
 from app.services.excel import (
     export_all_excel,
     export_group_excel,
     export_test_excel,
     export_student_excel,
+    safe_filename,
 )
 from sqlalchemy import select, func
-from sqlalchemy.orm import selectinload
 
 router = Router(name="results")
 log = logging.getLogger(__name__)
 
-
-async def _owner_id(telegram_id: int) -> int:
-    factory = get_session_factory()
-    async with factory() as db:
-        user = await get_or_create_user(db, telegram_id)
-        await db.commit()
-        return user.id
-
-
-@router.message(F.text == "📊 Natijalar")
-async def results_menu_message(message: Message) -> None:
-    log.info("Message handler '📊 Natijalar' called for user_id=%d", message.from_user.id)
-    try:
-        owner_id = await _owner_id(message.from_user.id)
-        factory = get_session_factory()
-        async with factory() as db:
-            groups = await get_groups_by_owner(db, owner_id)
-            log.info("Loaded %d groups for results menu", len(groups))
-
-        if not groups:
-            await message.answer(
-                "Hozircha guruh yo'q.",
-                reply_markup=main_menu_inline_kb(),
-            )
-            return
-
-        from aiogram.utils.keyboard import InlineKeyboardBuilder
-        builder = InlineKeyboardBuilder()
-        for g in groups:
-            builder.button(text=g.name, callback_data=f"res_group:{g.id}")
-        builder.button(text="📥 Barcha natijalar (Excel)", callback_data="res_all_excel")
-        builder.button(text="⬅️ Bosh menyu", callback_data="back_to_main")
-        builder.adjust(1)
-
-        await message.answer(
-            "📊 Natijalarini ko'rish uchun guruh tanlang yoki barcha natijalarni yuklab oling:",
-            reply_markup=builder.as_markup(),
-        )
-    except Exception as e:
-        log.exception("Error in results_menu_message: %s", e)
-        await message.answer("❌ Natijalarni yuklashda xatolik yuz berdi. Iltimos qayta urinib ko'ring.")
+# Egalik: `res_*:<id>` callback'lari mijozdan keladi va soxtalanishi mumkin.
+# Har guruh/test/o'quvchi/urinish `owned_*` bilan joriy ustozga tegishli
+# ekani tekshiriladi; Excel eksportlar servisga `owner_id` beradi.
+# `db_user` — `AccessMiddleware` bergan bazadagi foydalanuvchi.
+# Bot default parse_mode=HTML — guruh/test/o'quvchi nomlari `escape()` dan o'tadi.
+# Reply-keyboard yo'q (bot faqat inline) — `"📊 Natijalar"` matn handleri
+# hech qachon ishlamasdi va olib tashlandi (weaknesses №25).
 
 
 @router.callback_query(F.data == "menu_results")
 @router.callback_query(F.data == "res_main")
-async def results_menu(call: CallbackQuery) -> None:
+async def results_menu(call: CallbackQuery, db_user: User) -> None:
     log.info("Callback query 'menu_results'/'res_main' called by user_id=%d", call.from_user.id)
     try:
-        owner_id = await _owner_id(call.from_user.id)
+        owner_id = db_user.id
         factory = get_session_factory()
         async with factory() as db:
             groups = await get_groups_by_owner(db, owner_id)
@@ -123,18 +91,19 @@ async def results_menu(call: CallbackQuery) -> None:
 
 
 @router.callback_query(F.data.startswith("res_group:"))
-async def show_res_group(call: CallbackQuery) -> None:
+async def show_res_group(call: CallbackQuery, db_user: User) -> None:
     group_id = int(call.data.split(":")[1])
+    owner_id = db_user.id
     factory = get_session_factory()
     async with factory() as db:
-        group = await get_group(db, group_id)
+        group = await owned_group(db, group_id, owner_id)
 
     if group is None:
         await call.answer("Guruh topilmadi.", show_alert=True)
         return
 
     await call.message.edit_text(
-        f"📁 Guruh: <b>{group.name}</b>\n\nNatijalarni ko'rish yoki Excel formatida yuklab olishni tanlang:",
+        f"📁 Guruh: <b>{escape(group.name)}</b>\n\nNatijalarni ko'rish yoki Excel formatida yuklab olishni tanlang:",
         reply_markup=res_group_menu_kb(group_id),
         parse_mode="HTML",
     )
@@ -142,11 +111,15 @@ async def show_res_group(call: CallbackQuery) -> None:
 
 
 @router.callback_query(F.data.startswith("res_group_tests:"))
-async def show_res_group_tests(call: CallbackQuery) -> None:
+async def show_res_group_tests(call: CallbackQuery, db_user: User) -> None:
     group_id = int(call.data.split(":")[1])
+    owner_id = db_user.id
     factory = get_session_factory()
     async with factory() as db:
-        tests = await get_tests_by_group(db, group_id)
+        if await owned_group(db, group_id, owner_id) is None:
+            await call.answer("Guruh topilmadi.", show_alert=True)
+            return
+        tests = await get_tests_by_group(db, group_id, owner_id=owner_id)
 
     if not tests:
         await call.message.edit_text(
@@ -163,12 +136,16 @@ async def show_res_group_tests(call: CallbackQuery) -> None:
     await call.answer()
 
 
+# `results:<id>` — test menyusidagi "📊 Natijalar" tugmasi (inline.py:test_menu_kb);
+# ilgari handleri yo'q edi va tugma "aylanib" turardi (weaknesses №25).
+@router.callback_query(F.data.startswith("results:"))
 @router.callback_query(F.data.startswith("res_test:"))
-async def show_res_test(call: CallbackQuery) -> None:
+async def show_res_test(call: CallbackQuery, db_user: User) -> None:
     test_id = int(call.data.split(":")[1])
+    owner_id = db_user.id
     factory = get_session_factory()
     async with factory() as db:
-        test = await get_test(db, test_id)
+        test = await owned_test(db, test_id, owner_id)
         if test is None:
             await call.answer("Test topilmadi.", show_alert=True)
             return
@@ -178,7 +155,7 @@ async def show_res_test(call: CallbackQuery) -> None:
     max_pct = f"{stats['max_percent']}%" if stats['max_percent'] is not None else "0.0%"
     
     await call.message.edit_text(
-        f"🏆 Olimpiada: <b>{test.title}</b>\n"
+        f"🏆 Olimpiada: <b>{escape(test.title)}</b>\n"
         f"Savollar soni: {test.question_count} ta\n\n"
         f"📊 Statistika:\n"
         f"└ Ishtirokchilar: {stats['count']} ta\n"
@@ -191,11 +168,12 @@ async def show_res_test(call: CallbackQuery) -> None:
 
 
 @router.callback_query(F.data.startswith("res_test_students:"))
-async def show_res_test_students(call: CallbackQuery) -> None:
+async def show_res_test_students(call: CallbackQuery, db_user: User) -> None:
     test_id = int(call.data.split(":")[1])
+    owner_id = db_user.id
     factory = get_session_factory()
     async with factory() as db:
-        test = await get_test(db, test_id)
+        test = await owned_test(db, test_id, owner_id)
         if test is None:
             await call.answer("Test topilmadi.", show_alert=True)
             return
@@ -245,12 +223,13 @@ async def show_res_test_students(call: CallbackQuery) -> None:
 
 
 @router.callback_query(F.data.startswith("res_student_tests:"))
-async def show_res_student_tests(call: CallbackQuery) -> None:
+async def show_res_student_tests(call: CallbackQuery, db_user: User) -> None:
     student_id = int(call.data.split(":")[1])
     from_test_id = int(call.data.split(":")[2])
+    owner_id = db_user.id
     factory = get_session_factory()
     async with factory() as db:
-        student = await db.get(Student, student_id)
+        student = await owned_student(db, student_id, owner_id)
         if student is None:
             await call.answer("O'quvchi topilmadi.", show_alert=True)
             return
@@ -279,7 +258,7 @@ async def show_res_student_tests(call: CallbackQuery) -> None:
         return
 
     await call.message.edit_text(
-        f"👤 O'quvchi: <b>{student.full_name}</b>\n\nIshtirok etgan olimpiadalari ro'yxati:",
+        f"👤 O'quvchi: <b>{escape(student.full_name)}</b>\n\nIshtirok etgan olimpiadalari ro'yxati:",
         reply_markup=res_student_attempts_kb(attempts, student_id, from_test_id),
         parse_mode="HTML",
     )
@@ -287,23 +266,17 @@ async def show_res_student_tests(call: CallbackQuery) -> None:
 
 
 @router.callback_query(F.data.startswith("res_attempt_detail:"))
-async def show_res_attempt_detail(call: CallbackQuery) -> None:
+async def show_res_attempt_detail(call: CallbackQuery, db_user: User) -> None:
     parts = call.data.split(":")
     attempt_id = int(parts[1])
     student_id = int(parts[2])
     from_test_id = int(parts[3])
 
+    owner_id = db_user.id
     factory = get_session_factory()
     async with factory() as db:
-        result = await db.execute(
-            select(Attempt)
-            .where(Attempt.id == attempt_id)
-            .options(
-                selectinload(Attempt.titul).selectinload(Titul.student),
-                selectinload(Attempt.titul).selectinload(Titul.test),
-            )
-        )
-        attempt = result.scalar_one_or_none()
+        # `owned_attempt` titul → student/test zanjirini ham yuklaydi.
+        attempt = await owned_attempt(db, attempt_id, owner_id)
 
     if attempt is None:
         await call.answer("Urinish ma'lumotlari topilmadi.", show_alert=True)
@@ -331,8 +304,8 @@ async def show_res_attempt_detail(call: CallbackQuery) -> None:
 # ─── EXCEL EKSPORT QATROVLARI ────────────────────────────────────────────────
 
 @router.callback_query(F.data == "res_all_excel")
-async def export_all(call: CallbackQuery) -> None:
-    owner_id = await _owner_id(call.from_user.id)
+async def export_all(call: CallbackQuery, db_user: User) -> None:
+    owner_id = db_user.id
     factory = get_session_factory()
     async with factory() as db:
         excel_bytes = await export_all_excel(db, owner_id)
@@ -345,57 +318,60 @@ async def export_all(call: CallbackQuery) -> None:
 
 
 @router.callback_query(F.data.startswith("res_group_excel:"))
-async def export_group(call: CallbackQuery) -> None:
+async def export_group(call: CallbackQuery, db_user: User) -> None:
     group_id = int(call.data.split(":")[1])
+    owner_id = db_user.id
     factory = get_session_factory()
     async with factory() as db:
-        group = await get_group(db, group_id)
+        group = await owned_group(db, group_id, owner_id)
         if group is None:
             await call.answer("Guruh topilmadi.", show_alert=True)
             return
-        excel_bytes = await export_group_excel(db, group_id)
+        excel_bytes = await export_group_excel(db, group_id, owner_id=owner_id)
 
-    safe_name = group.name.replace(" ", "_").lower()
+    safe_name = safe_filename(group.name, fallback="guruh").lower()
     await call.message.answer_document(
         BufferedInputFile(excel_bytes, filename=f"natijalar_guruh_{safe_name}.xlsx"),
-        caption=f"📊 Guruh: {group.name} — barcha olimpiadalar natijalari",
+        caption=f"📊 Guruh: {escape(group.name)} — barcha olimpiadalar natijalari",
     )
     await call.answer()
 
 
 @router.callback_query(F.data.startswith("res_test_excel:"))
-async def export_test(call: CallbackQuery) -> None:
+async def export_test(call: CallbackQuery, db_user: User) -> None:
     test_id = int(call.data.split(":")[1])
+    owner_id = db_user.id
     factory = get_session_factory()
     async with factory() as db:
-        test = await get_test(db, test_id)
+        test = await owned_test(db, test_id, owner_id)
         if test is None:
             await call.answer("Test topilmadi.", show_alert=True)
             return
-        excel_bytes = await export_test_excel(db, test_id)
+        excel_bytes = await export_test_excel(db, test_id, owner_id=owner_id)
 
-    safe_title = test.title.replace(" ", "_").lower()
+    safe_title = safe_filename(test.title, fallback="test").lower()
     await call.message.answer_document(
         BufferedInputFile(excel_bytes, filename=f"natijalar_olimpiada_{safe_title}.xlsx"),
-        caption=f"🏆 Olimpiada: {test.title} — o'quvchilar natijalari",
+        caption=f"🏆 Olimpiada: {escape(test.title)} — o'quvchilar natijalari",
     )
     await call.answer()
 
 
 @router.callback_query(F.data.startswith("res_student_excel:"))
-async def export_student(call: CallbackQuery) -> None:
+async def export_student(call: CallbackQuery, db_user: User) -> None:
     student_id = int(call.data.split(":")[1])
+    owner_id = db_user.id
     factory = get_session_factory()
     async with factory() as db:
-        student = await db.get(Student, student_id)
+        student = await owned_student(db, student_id, owner_id)
         if student is None:
             await call.answer("O'quvchi topilmadi.", show_alert=True)
             return
-        excel_bytes = await export_student_excel(db, student_id)
+        excel_bytes = await export_student_excel(db, student_id, owner_id=owner_id)
 
-    safe_name = student.full_name.replace(" ", "_").lower()
+    safe_name = safe_filename(student.full_name, fallback="oquvchi").lower()
     await call.message.answer_document(
-        BufferedInputFile(excel_bytes, filename=f"natijalar_o'quvchi_{safe_name}.xlsx"),
-        caption=f"👤 O'quvchi: {student.full_name} — barcha testlardagi ishtiroki",
+        BufferedInputFile(excel_bytes, filename=f"natijalar_oquvchi_{safe_name}.xlsx"),
+        caption=f"👤 O'quvchi: {escape(student.full_name)} — barcha testlardagi ishtiroki",
     )
     await call.answer()

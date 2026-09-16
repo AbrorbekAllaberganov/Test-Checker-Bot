@@ -26,3 +26,12 @@ def sample_detected_40(sample_key_40) -> dict:
                 detected[str(q)] = opt
                 break
     return detected
+
+
+@pytest.fixture(autouse=True)
+async def reset_db_engine():
+    yield
+    from app.core import db
+    if db._engine is not None:
+        await db._engine.dispose()
+

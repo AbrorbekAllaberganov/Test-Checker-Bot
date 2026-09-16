@@ -155,9 +155,10 @@ Iyerarxik: yuqoridagi pastdagining hamma huquqiga ega
 | POST | `/api/admin/users/{id}/block` | SUPPORT_OPERATOR |
 | PATCH | `/api/admin/users/{id}/role` | SUPERADMIN |
 | GET | `/api/admin/groups` · `/groups/{id}` · `/groups/{id}/export` | ANALYST |
-| GET | `/api/admin/students` · `/students/{id}/export` | ANALYST |
+| GET | `/api/admin/students` · `/students/{id}` · `/students/{id}/export` | ANALYST |
 | GET | `/api/admin/tests` · `/tests/{id}` · `/tests/{id}/export` | ANALYST |
 | GET | `/api/admin/scans` · `/scans/review-queue` · `/scans/{id}` | ANALYST |
+| GET | `/api/admin/scans/{id}/file/{source,debug}` — skan surati / OMR annotatsiyasi (fayl) | ANALYST |
 | POST | `/api/admin/scans/{id}/override` · `/scans/{id}/resolve` | SUPPORT_OPERATOR |
 | GET | `/api/admin/plans` · `/subscriptions` | ANALYST |
 | POST, PUT | `/api/admin/plans` · `/plans/{id}` | SUPERADMIN |
@@ -214,32 +215,88 @@ bir nechta skan limitdan oshib ketolmaydi.
 cp .env.example .env
 ```
 
-`SECRET_KEY` uchun tasodifiy kalit:
+Tasodifiy kalitlar (`SECRET_KEY` va `INTERNAL_API_KEY` uchun alohida):
 
 ```bash
 python -c "import secrets; print(secrets.token_hex(32))"
 ```
 
-`.env` da `ADMIN_TELEGRAM_IDS` va `SECRET_KEY` ni to'ldiring, keyin:
+`.env` da `CHANGE_ME_...` bilan belgilangan hamma narsani to'ldiring —
+ayniqsa `ADMIN_TELEGRAM_IDS`, `SECRET_KEY`, `INTERNAL_API_KEY`,
+`POSTGRES_PASSWORD`, `REDIS_PASSWORD`, `GRAFANA_ADMIN_PASSWORD`. Keyin:
 
 ```bash
-docker compose build api
-```
-
-```bash
-docker compose run --rm --no-deps api alembic upgrade head
-```
-
-```bash
+docker compose build
+docker compose up -d postgres redis
+docker compose run --rm api alembic upgrade head
 docker compose up -d
 ```
 
-Panel: `http://localhost:8000/admin`
-API hujjati: `http://localhost:8000/docs`
+**Tartib muhim:** migratsiya ilova konteynerlaridan OLDIN. Yangi kod
+yangi ustunlarni SELECT qiladi — teskari tartibda bot ham, API ham
+migratsiya tugaguncha yiqilib turadi. Shu sababli `.github/workflows/deploy.yml`
+ham aynan shu ketma-ketlikda ishlaydi.
+
+Panel: `http://127.0.0.1:8000/admin`
+API hujjati: `http://127.0.0.1:8000/docs`
+
+Portlar faqat `127.0.0.1` ga bog'langan (postgres 5433, redis 6380, api
+8000, loki 3100, grafana 3001). Uzoq serverda SSH tunnel bilan oching:
+
+```bash
+ssh -L 8000:127.0.0.1:8000 -L 3001:127.0.0.1:3001 user@server
+```
 
 `docker compose build` `node:22-slim` bosqichida `npm run build` ni
 bajaradi va faqat tayyor `dist` ni yakuniy image'ga ko'chiradi — Node
 runtime prod image'ga tushmaydi.
+
+Prod serverda `.env` ga `INSTALL_DEV=false` qo'shing — image'ga pytest va
+boshqa test bog'liqliklari tushmaydi (lekin unda `pytest` buyrug'i ham
+ishlamay qoladi).
+
+### 8.1.1. Mavjud o'rnatmani yangilash (buzuvchi o'zgarishlar)
+
+Redis paroli, majburiy `.env` o'zgaruvchilari va non-root konteyner
+qo'shilgandan keyin **eski `.env` bilan compose ishga tushmaydi**. Qilish
+kerak bo'lgan ishlar:
+
+1. `.env` ga yangi qatorlarni qo'shing:
+
+   ```
+   REDIS_PASSWORD=<yangi parol>
+   REDIS_URL=redis://:<yangi parol>@redis:6379/0
+   GRAFANA_ADMIN_PASSWORD=<yangi parol>
+   API_BIND_HOST=127.0.0.1
+   TRUSTED_PROXY_IPS=127.0.0.1
+   INSTALL_DEV=false
+   ```
+
+2. **`POSTGRES_PASSWORD` ni o'zgartirmoqchi bo'lsangiz** — `.env` ni
+   tahrirlash YETARLI EMAS. Postgres parolni faqat baza birinchi marta
+   yaratilganda o'rnatadi; mavjud volume'da eski parol qoladi va ilova
+   autentifikatsiyadan o'tolmaydi. Avval bazada o'zgartiring:
+
+   ```bash
+   docker compose exec -T postgres psql -U omruser -d omrdb \
+     -c "ALTER USER omruser PASSWORD '<yangi parol>';"
+   ```
+
+   Keyin `.env` dagi `POSTGRES_PASSWORD`, `DATABASE_URL` va
+   `SYNC_DATABASE_URL` ni bir xil yangi parolga keltiring.
+   Parolni o'zgartirmasangiz — eskisini shu uchta joyga yozib qo'ying,
+   hech narsa buzilmaydi.
+
+3. Redis paroli qo'shilgach eski navbat va FSM state'lar o'qilmay qoladi
+   (parol server flag'i, ma'lumot yo'qolmaydi, lekin ulanish yangilanadi).
+   Konteynerlarni qayta yarating: `docker compose up -d --force-recreate redis bot worker api`.
+
+4. Volume egaligi: ilova endi `appuser` (uid 10001) nomidan ishlaydi.
+   Eski named volume'lar `root` egaligida — `docker/entrypoint.sh` buni
+   birinchi ishga tushishda **avtomatik** to'g'rilaydi (konteyner root
+   bilan boshlanib, `chown` qilib, `gosu` bilan huquqni tushiradi).
+   Qo'lda hech narsa qilish shart emas; birinchi start bir-necha soniya
+   uzoqroq davom etishi mumkin.
 
 ### 8.2. Frontend dev rejimi (tezkor qayta yuklash bilan)
 
