@@ -11,6 +11,7 @@ Token payload:
       "tg":  <telegram_id>,
       "role": "SUPERADMIN",
       "typ": "access" | "refresh",
+      "fam": "<sessiya oilasi>",   # refresh rotatsiyasi uchun
       "iat": ..., "exp": ..., "jti": "..."
     }
 """
@@ -108,6 +109,9 @@ class TokenPayload:
     token_type: TokenType
     expires_at: datetime
     jti: str
+    # Bitta login sessiyasi. Refresh aylanganda jti o'zgaradi, family qoladi —
+    # o'g'irlangan token aniqlansa butun oila bekor qilinadi (T-30).
+    family: str = ""
 
 
 def _create_token(
@@ -117,6 +121,7 @@ def _create_token(
     admin_role: str,
     token_type: TokenType,
     expires_delta: timedelta,
+    family: str,
 ) -> str:
     assert_secret_is_safe()
 
@@ -126,6 +131,7 @@ def _create_token(
         "tg": telegram_id,
         "role": admin_role,
         "typ": token_type,
+        "fam": family,
         "iat": int(now.timestamp()),
         "exp": int((now + expires_delta).timestamp()),
         "jti": uuid.uuid4().hex,
@@ -133,7 +139,14 @@ def _create_token(
     return jwt.encode(payload, get_settings().secret_key, algorithm=ALGORITHM)
 
 
-def create_access_token(*, user_id: int, telegram_id: int, admin_role: str) -> str:
+def new_family_id() -> str:
+    """Yangi login sessiyasi uchun oila identifikatori."""
+    return uuid.uuid4().hex
+
+
+def create_access_token(
+    *, user_id: int, telegram_id: int, admin_role: str, family: str = ""
+) -> str:
     settings = get_settings()
     return _create_token(
         user_id=user_id,
@@ -141,10 +154,13 @@ def create_access_token(*, user_id: int, telegram_id: int, admin_role: str) -> s
         admin_role=admin_role,
         token_type="access",
         expires_delta=timedelta(minutes=settings.admin_access_token_minutes),
+        family=family or new_family_id(),
     )
 
 
-def create_refresh_token(*, user_id: int, telegram_id: int, admin_role: str) -> str:
+def create_refresh_token(
+    *, user_id: int, telegram_id: int, admin_role: str, family: str = ""
+) -> str:
     settings = get_settings()
     return _create_token(
         user_id=user_id,
@@ -152,6 +168,7 @@ def create_refresh_token(*, user_id: int, telegram_id: int, admin_role: str) -> 
         admin_role=admin_role,
         token_type="refresh",
         expires_delta=timedelta(days=settings.admin_refresh_token_days),
+        family=family or new_family_id(),
     )
 
 
@@ -195,4 +212,5 @@ def decode_token(token: str, *, expected_type: TokenType | None = None) -> Token
         token_type=token_type,  # type: ignore[arg-type]
         expires_at=datetime.fromtimestamp(raw["exp"], tz=timezone.utc),
         jti=str(raw.get("jti") or ""),
+        family=str(raw.get("fam") or ""),
     )

@@ -421,6 +421,9 @@ export interface ScanListItem {
   group_name: string | null
   owner_id: number | null
   owner_name: string | null
+  /** Skanni kim yubordi (004). QR o'qilmasa owner_* NULL — bu yagona manba. */
+  submitted_by_id: number | null
+  submitted_by_name: string | null
 }
 
 export interface BubbleCell {

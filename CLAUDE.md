@@ -16,8 +16,8 @@ gapirmaydi — uni `Glob`/`Grep` bilan topish arzon.
 docker compose build              # HAMMA image (api+bot+worker) — quyidagi tuzoqqa qarang
 docker compose up -d
 docker compose run --rm --no-deps api alembic upgrade head
-docker compose run --rm --no-deps api pytest app/tests -q
-docker compose logs -f api bot worker
+docker compose run --rm --no-deps api pytest app/tests -q   # DB testlari SKIP
+docker compose logs -f api bot worker beat
 ```
 
 Frontend (`admin-ui/`):
@@ -32,6 +32,17 @@ Baza (dev):
 ```bash
 docker compose exec -T postgres psql -U omruser -d omrdb -c "SELECT ..."
 ```
+
+**DB testlari alohida bazani talab qiladi** (aks holda `skip`):
+
+```bash
+docker compose exec -T postgres psql -U omruser -d postgres -c "CREATE DATABASE omrdb_test"
+docker compose run --rm --no-deps \
+  -e TEST_DATABASE_URL="postgresql+asyncpg://omruser:PAROL@postgres:5432/omrdb_test" \
+  api pytest app/tests -q
+```
+
+URL ichida `test` so'zi bo'lishi SHART — pytest aks holda darhol to'xtaydi.
 
 ---
 
@@ -85,7 +96,32 @@ yaratilganda o'rnatiladi, keyin `ALTER USER omruser PASSWORD '...'` kerak
 **8. Bash tool heredoc ichida `\n` ni buzadi.**
 Python/TS satrlariga escape yozish kerak bo'lsa `Write`/`Edit` tool'ini
 ishlating, `cat <<'EOF'` emas — `"\n"` haqiqiy qator uzilishiga aylanib
-faylni sintaksis xatosiga olib keladi.
+faylni sintaksis xatosiga olib keladi. Bu Markdown/shell'dagi `\` qator
+davomiga ham tegishli — u ham yo'qoladi.
+
+**9. `celery beat` ALOHIDA konteyner.**
+`cleanup_temp_files` jadvali `worker/celery_app.py: beat_schedule` da, lekin
+uni faqat `beat` servisi ishga tushiradi. Compose'da u bor; jadval o'zgarsa
+`beat` ni ham qayta ishga tushiring.
+
+**10. Bot/worker/beat'da healthcheck ATAYLAB o'chirilgan.**
+Dockerfile'dagi `HEALTHCHECK` `/health` ga uradi — faqat `api` HTTP
+tinglaydi. Boshqalarida compose'da `healthcheck: disable: true`; olib
+tashlamang, aks holda ular doim "unhealthy" ko'rinadi.
+
+**11. `/health` endi DB va Redis'ni ham tekshiradi va 503 qaytarishi mumkin.**
+Faqat jarayon tirikligi kerak bo'lsa `GET /health?deep=false`.
+
+**12. Admin tokenida `fam` (sessiya oilasi) claim bor.**
+Refresh aylanganda `jti` o'zgaradi, `fam` qoladi; bekor qilish ro'yxati
+Redis'da (`admin:revoked:*`). Redis yotsa tekshiruv **fail-open** — bu
+ongli murosa (`services/token_store.py`).
+
+**13. Fayl yo'llari ikki papkada.**
+Skan `temp_dir` ga tushadi, baholangandan keyin worker uni `uploads_dir`
+(`/data/uploads`, doimiy volume) ga KO'CHIRADI va `attempt.source_file` ni
+yangilaydi. `temp_dir` ni kunlik `cleanup_temp_files` tozalaydi — review
+fayllari u yerda qolib ketmasin.
 
 ---
 
@@ -97,7 +133,8 @@ Nomlar "odatiy" nomlardan farq qiladi:
 |---|---|
 | `tests` | `question_count`, `variant_count`, `answer_key` (JSONB) — `q_count`/`opt_count`/`correct_keys` EMAS |
 | `students` | `telegram_id` bor, `code` YO'Q |
-| `attempts` | `detected`, `detail`, `percent`, `needs_review`, `source_file`, `debug_file` — `raw_answers`/`percentage`/`debug_image_path` EMAS |
+| `attempts` | `detected`, `detail`, `percent`, `needs_review`, `source_file`, `debug_file`, `submitted_by_id` (004) — `raw_answers`/`percentage`/`debug_image_path` EMAS |
+| `subscriptions` | `anchor_day` (004) — davr langari, `period_start.day` EMAS |
 
 JSONB shakllari:
 
@@ -112,6 +149,8 @@ tests.answer_key     = {"1": "A", ...}
 `attempts.titul_id` **NULL bo'lishi mumkin** (QR hali o'qilmagan pending
 skan). Skanlar ustidagi har qanday JOIN `outerjoin` bo'lishi shart — aks
 holda aynan eng muammoli skanlar ro'yxatdan tushib qoladi.
+Bunday skan uchun egalik **`attempts.submitted_by_id`** orqali aniqlanadi
+(`services/access.py`) — zanjir uzilgan, boshqa belgi yo'q.
 
 `confidence` va `bubble_data` faqat `003` dan keyingi skanlarda bor;
 eskilarida NULL — UI buni ko'rsatishi kerak, yiqilmasligi kerak.
@@ -169,23 +208,29 @@ Rollar iyerarxik: `ANALYST` < `SUPPORT_OPERATOR` < `SUPERADMIN`.
 
 ---
 
-## Ma'lum muammolar (hal qilinmagan, scope tashqarisida)
+## Ma'lum muammolar
 
-Bular `weaknesses.md` da batafsil. Eng muhimlari:
+`weaknesses.md` dagi **37 banddan 37 tasi yopildi** (2026-09-19). Qolgani:
 
-1. **Bot tokeni git tarixida.** `.env.example` dan olib tashlandi (FAZA 0),
-   lekin eski commitlarda qolgan va hozir ham ishlatilmoqda —
+1. **Bot tokeni git tarixida.** `.env.example` dan olib tashlandi, lekin
+   eski commitlarda qolgan va hozir ham ishlatilmoqda —
    **BotFather orqali revoke qilinishi kerak** (buni faqat odam qila oladi).
    CI har push'da git'dagi fayllarni token shabloniga tekshiradi.
-2. ~~`/api/web/*` IDOR~~ — **tuzatildi (FAZA 1).** Har endpoint `user.id`
-   bilan filtrlaydi; egalik zanjiri `services/access.py` da.
-3. ~~Bot callback'larida egalik yo'q~~ — **tuzatildi (FAZA 1).**
-4. ~~`/static/*` auth'siz~~ — **tuzatildi (FAZA 1).** Mount'lar yo'q; fayllar
-   `/api/web/attempts/{id}/file/{kind}` va `/api/admin/scans/{id}/file/{kind}`
-   orqali (frontend fetch + blob URL, `<img src>` emas).
-5. **5 variantli test aslida ishlamaydi** — `omr/layout.py` da `options`
-   faqat `"ABCD"`. Bot 5 variantni tanlashga ruxsat beradi, lekin PDF'da
-   E doirasi chizilmaydi va OMR uni o'qimaydi.
+   Git tarixini qayta yozish (`filter-repo`) — foydalanuvchi qarori.
 
-Bularni tuzatishga kirishishdan oldin foydalanuvchidan tasdiq oling —
-ular alohida, kattaroq ishlar.
+**Ongli murosalar** (zaiflik emas, qabul qilingan cheklov — o'zgartirishdan
+oldin foydalanuvchidan so'rang):
+
+- **5 variantli test o'chirilgan** (T-21 varianti A). `omr/layout.py` da
+  `options` faqat `"ABCD"`; bot 5 ni tanlashga ruxsat bermaydi, eski
+  5-variantli testlarga ogohlantirish chiqadi. Layout'ga `E` qo'shish
+  kalibrlash talab qiladi (`scripts/calibrate.py`, `docs/03`).
+- **Ko'p sahifali PDF** — faqat 1-sahifa tekshiriladi, natija xabarida
+  ogohlantirish bor. Har sahifani alohida urinish qilish — alohida feature.
+- **HEIC rad etiladi** (OpenCV o'qiy olmaydi); foydalanuvchiga nima qilish
+  kerakligi aytiladi.
+- **O'quvchini botga ulash oqimi yozilmagan** — `students.telegram_id` va
+  `link_telegram()` bor, handler yo'q (`docs/05` "Rejalashtirilgan").
+- **Albom kollektori jarayon xotirasida** — bot restart bo'lsa yig'ilayotgan
+  albom yo'qoladi; yetim fayllarni kunlik `cleanup_temp_files` o'chiradi.
+- **Grafana alert kontakt nuqtasi repoda yo'q** (sir) — UI'da sozlanadi.

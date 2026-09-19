@@ -31,14 +31,9 @@ log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
-# initData auth_date dan keyin necha soniyada eskirgan deb hisoblanadi.
-# 0 — eskirishni tekshirmaslik (Mini App sessiyasi uzoq ochiq turishi mumkin).
-_INIT_DATA_MAX_AGE = 0
-
-
 # ─── Telegram Mini App initData validatsiyasi ───────────────────────────────
 
-def validate_init_data(init_data: str) -> dict:
+def validate_init_data(init_data: str, max_age: int | None = None) -> dict:
     """
     Telegram WebApp `initData` qatorini tekshiradi.
 
@@ -46,10 +41,25 @@ def validate_init_data(init_data: str) -> dict:
         secret_key = HMAC_SHA256(key="WebAppData", msg=bot_token)
         hash       = HMAC_SHA256(key=secret_key,  msg=data_check_string)
 
-    Muvaffaqiyatli bo'lsa — Telegram `user` dict qaytaradi.
-    Xato bo'lsa — ValueError ko'taradi.
+    ESKIRISH (weaknesses.md №20): ilgari muddat tekshirilmasdi — bir marta
+    tutib olingan `initData` (masalan log yoki proxy orqali) abadiy amal
+    qilardi. Endi `auth_date` majburiy va `max_age` dan o'tgan bo'lsa rad
+    etiladi.
+
+    Args:
+        init_data: Telegram bergan imzolangan qator.
+        max_age:   Amal qilish muddati (sekund). None = `INIT_DATA_MAX_AGE_SECONDS`.
+                   0 — tekshirilmaydi (ishlatmang).
+
+    Returns:
+        Telegram `user` dict.
+
+    Raises:
+        ValueError: imzo, format yoki muddat noto'g'ri bo'lsa.
     """
     settings = get_settings()
+    if max_age is None:
+        max_age = settings.init_data_max_age_seconds
 
     try:
         parsed = dict(parse_qsl(init_data, keep_blank_values=True))
@@ -69,14 +79,19 @@ def validate_init_data(init_data: str) -> dict:
     if not hmac.compare_digest(calc_hash, received_hash):
         raise ValueError("imzo noto'g'ri")
 
-    # Ixtiyoriy: auth_date eskirganini tekshirish
-    if _INIT_DATA_MAX_AGE > 0:
+    # auth_date eskirganini tekshirish
+    if max_age and max_age > 0:
         import time
+
         try:
             auth_date = int(parsed.get("auth_date", "0"))
         except ValueError:
             auth_date = 0
-        if auth_date and (time.time() - auth_date) > _INIT_DATA_MAX_AGE:
+        # `auth_date` yo'q bo'lsa — rad: usiz muddatni aniqlab bo'lmaydi va
+        # tutib olingan qator cheksiz ishlaydi.
+        if auth_date <= 0:
+            raise ValueError("auth_date topilmadi")
+        if (time.time() - auth_date) > max_age:
             raise ValueError("initData muddati o'tgan")
 
     user_raw = parsed.get("user")

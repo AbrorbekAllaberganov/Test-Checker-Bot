@@ -38,6 +38,7 @@ from app.models.subscription import LIVE_STATUSES, Subscription
 from app.models.test import Test
 from app.models.titul import Titul
 from app.models.user import User
+from app.services.search import LIKE_ESCAPE, like_pattern
 from app.schemas.admin.common import Page
 from app.schemas.admin.subscriptions import SubscriptionOut
 from app.schemas.admin.users import (
@@ -115,10 +116,10 @@ def _apply_user_filters(
     plan_code: Optional[str],
 ) -> Select:
     if search:
-        pattern = f"%{search.strip()}%"
+        pattern = like_pattern(search)
         conditions = [
-            User.full_name.ilike(pattern),
-            User.username.ilike(pattern),
+            User.full_name.ilike(pattern, escape=LIKE_ESCAPE),
+            User.username.ilike(pattern, escape=LIKE_ESCAPE),
         ]
         # Raqam kiritilgan bo'lsa telegram_id bo'yicha ham qidiramiz.
         digits = search.strip().lstrip("@")

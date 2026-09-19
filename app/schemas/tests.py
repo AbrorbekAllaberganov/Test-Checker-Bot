@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field, field_validator
 class TestCreate(BaseModel):
     title: str = Field(..., min_length=1, max_length=300)
     question_count: int = Field(..., description="40 | 50 | 90")
-    variant_count: int = Field(4, ge=2, le=5)
+    variant_count: int = Field(4, ge=4, le=4)  # hozircha faqat A-D (T-21)
     answer_key: dict[str, str] = Field(
         ..., description='{"1":"A","2":"B",...} 1-based string keys'
     )

@@ -93,11 +93,15 @@ def qcount_kb() -> InlineKeyboardMarkup:
 
 
 def vcount_kb() -> InlineKeyboardMarkup:
-    """Variant soni tanlash."""
+    """
+    Variant soni tanlash.
+
+    Hozircha faqat 4 (A-D): OMR grid A-D uchun kalibrlangan, 5-variantda PDF'da
+    E doirasi chizilmaydi va javob har doim xato bo'lardi (weaknesses.md №12).
+    """
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="4 (A-D)", callback_data="vcount:4"),
-            InlineKeyboardButton(text="5 (A-E)", callback_data="vcount:5"),
         ],
         [InlineKeyboardButton(text="❌ Bekor qilish", callback_data="cancel_fsm")]
     ])

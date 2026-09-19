@@ -20,17 +20,47 @@ RUN npm run build
 
 
 # ──────────────────────────────────────────────────────────────────────
-# 2-bosqich: Python ilovasi (API / bot / worker uchun umumiy)
+# 2-bosqich: Python bog'liqliklarini YIG'ISH (builder)
+#
+# `gcc` va `python3-dev` faqat shu yerda kerak (C kengaytmalari uchun).
+# Yakuniy image'ga ular TUSHMAYDI — kompilyator prod konteynerda turishi
+# hujumchining ishini osonlashtiradi va image'ni ~150 MB shishiradi
+# (weaknesses.md №37).
+# ──────────────────────────────────────────────────────────────────────
+FROM python:3.11-slim AS python-builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    python3-dev \
+    libffi-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Bog'liqliklar alohida prefiksga o'rnatiladi va keyin runtime'ga
+# ko'chiriladi. `-e .` ishlatilmaydi: u manba papkasiga bog'lanib qoladi.
+COPY pyproject.toml .
+ARG INSTALL_DEV=true
+RUN mkdir -p /install \
+    && if [ "$INSTALL_DEV" = "true" ]; then \
+        pip install --no-cache-dir --prefix=/install ".[dev]"; \
+    else \
+        pip install --no-cache-dir --prefix=/install "."; \
+    fi
+
+
+# ──────────────────────────────────────────────────────────────────────
+# 3-bosqich: Ishlaydigan image (API / bot / worker uchun umumiy)
 # ──────────────────────────────────────────────────────────────────────
 FROM python:3.11-slim AS base
 
-# System dependencies
+# Faqat RUNTIME kutubxonalari (kompilyatorsiz).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     # WeasyPrint needs (Debian trixie compatible package names)
     libpango-1.0-0 \
     libpangocairo-1.0-0 \
     libgdk-pixbuf-xlib-2.0-0 \
-    libffi-dev \
+    libffi8 \
     libcairo2 \
     libxml2 \
     libxslt1.1 \
@@ -45,9 +75,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-dejavu-core \
     # Huquqlarni tushirish uchun (docker/entrypoint.sh)
     gosu \
-    # Build tools
-    gcc \
-    python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -57,17 +84,8 @@ WORKDIR /app
 # to'g'rilab, keyin `gosu` bilan shu foydalanuvchiga o'tadi.
 RUN useradd --system --uid 10001 --create-home --shell /usr/sbin/nologin appuser
 
-# Install Python deps first (cache layer) — manba nusxalanishidan oldin,
-# shunda kodni o'zgartirganda bog'liqliklar qaytadan o'rnatilmaydi.
-# INSTALL_DEV=false — prod image'ga pytest va boshqa test bog'liqliklari
-# tushmaydi (compose `.env` dagi INSTALL_DEV orqali uzatadi).
-COPY pyproject.toml .
-ARG INSTALL_DEV=true
-RUN if [ "$INSTALL_DEV" = "true" ]; then \
-        pip install --no-cache-dir -e ".[dev]"; \
-    else \
-        pip install --no-cache-dir -e "."; \
-    fi
+# Builder'da o'rnatilgan paketlar (kesh qatlami — manbadan oldin).
+COPY --from=python-builder /install /usr/local
 
 # Copy source
 COPY . .
@@ -87,6 +105,12 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
+
+# Image darajasidagi healthcheck — API uchun (compose'da servis bo'yicha
+# aniqroq qiymatlar bilan qayta belgilanadi). `/health` DB va Redis'ni ham
+# tekshiradi va nosozda 503 beradi (weaknesses.md №37).
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+    CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).status == 200 else 1)" || exit 1
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 

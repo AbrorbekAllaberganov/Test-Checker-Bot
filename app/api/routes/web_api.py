@@ -46,7 +46,12 @@ from app.services.attempt_files import (
     file_response_for,
     resolve_attempt_file,
 )
-from app.services.grading import grade
+from app.core.time import local_day_start, to_local
+from app.services.grading import (
+    AnswerValidationError,
+    grade,
+    validate_answers,
+)
 
 log = logging.getLogger(__name__)
 
@@ -100,11 +105,11 @@ async def get_dashboard_stats(
         await db.execute(_attempts(func.count(Attempt.id)))
     ).scalar() or 0
 
-    # Bugungi urinishlar (kun boshi). created_at TIMESTAMPTZ — tz-aware
-    # qiymat kerak, aks holda asyncpg naive/aware xatosi beradi.
-    today_start = datetime.now(timezone.utc).replace(
-        hour=0, minute=0, second=0, microsecond=0
-    )
+    # Bugungi urinishlar. "Bugun" — O'ZBEKISTON kuni (APP_TIMEZONE), UTC emas:
+    # UTC kun boshi Toshkentda 05:00, ya'ni ertalabki skanlar "kecha"ga
+    # tushib qolardi (weaknesses.md №28). Natija tz-aware UTC — `created_at`
+    # TIMESTAMPTZ bilan solishtirish uchun shart.
+    today_start = local_day_start()
     scans_today = (
         await db.execute(
             _attempts(func.count(Attempt.id)).where(Attempt.created_at >= today_start)
@@ -158,7 +163,7 @@ async def get_groups(
         {
             "id": g.id,
             "name": g.name,
-            "created_at": g.created_at.strftime("%d.%m.%Y %H:%M"),
+            "created_at": to_local(g.created_at).strftime("%d.%m.%Y %H:%M"),
             "students_count": len(g.students),
             "tests_count": len(g.tests),
         }
@@ -185,12 +190,12 @@ async def get_group_details(
     return {
         "id": group.id,
         "name": group.name,
-        "created_at": group.created_at.strftime("%d.%m.%Y %H:%M"),
+        "created_at": to_local(group.created_at).strftime("%d.%m.%Y %H:%M"),
         "students": [
             {
                 "id": s.id,
                 "full_name": s.full_name,
-                "created_at": s.created_at.strftime("%d.%m.%Y %H:%M"),
+                "created_at": to_local(s.created_at).strftime("%d.%m.%Y %H:%M"),
             }
             for s in group.students
         ],
@@ -200,7 +205,7 @@ async def get_group_details(
                 "title": t.title,
                 "question_count": t.question_count,
                 "variant_count": t.variant_count,
-                "created_at": t.created_at.strftime("%d.%m.%Y %H:%M"),
+                "created_at": to_local(t.created_at).strftime("%d.%m.%Y %H:%M"),
             }
             for t in group.tests
         ],
@@ -274,7 +279,7 @@ async def get_test_details(
             "percent": r.percent,
             "needs_review": r.needs_review,
             "attempt_id": r.attempt_id,
-            "created_at": r.created_at.strftime("%d.%m.%Y %H:%M") if r.created_at else None,
+            "created_at": to_local(r.created_at).strftime("%d.%m.%Y %H:%M") if r.created_at else None,
         }
         for r in results
     ]
@@ -340,7 +345,7 @@ async def get_student_details(
                 "total": r[3],
                 "percent": float(r[4]) if r[4] is not None else 0.0,
                 "needs_review": r[5],
-                "date": r[6].strftime("%d.%m.%Y %H:%M"),
+                "date": to_local(r[6]).strftime("%d.%m.%Y %H:%M"),
             }
             for r in attempts_rows
         ],
@@ -377,7 +382,7 @@ async def get_attempt_details(
         "question_count": question_count,
         "percent": float(attempt.percent) if attempt.percent is not None else None,
         "needs_review": attempt.needs_review,
-        "created_at": attempt.created_at.strftime("%d.%m.%Y %H:%M"),
+        "created_at": to_local(attempt.created_at).strftime("%d.%m.%Y %H:%M"),
         "detected": attempt.detected,
         "detail": attempt.detail,
         "error_msg": attempt.error_msg,
@@ -420,7 +425,13 @@ async def review_attempt(
     user: User = Depends(get_webapp_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Ustoz tomonidan belgilarni qo'lda to'g'rilash — faqat o'z skani."""
+    """
+    Ustoz tomonidan belgilarni qo'lda to'g'rilash — faqat o'z skani.
+
+    `corrected_answers` TO'LIQ to'plam bo'lishi shart emas: faqat o'zgargan
+    savollar yuboriladi va mavjud `detected` ustiga qo'yiladi (admin
+    panelidagi `override_answers` bilan bir xil mantiq — weaknesses.md №24).
+    """
     attempt = await owned_attempt(db, attempt_id, user.id)
     if attempt is None:
         raise HTTPException(status_code=404, detail="Urinish topilmadi")
@@ -429,15 +440,33 @@ async def review_attempt(
     if test is None:
         raise HTTPException(status_code=400, detail="Urinish testga ulanmagan")
 
-    gr = grade(corrected_answers, test.answer_key)
+    try:
+        validate_answers(
+            corrected_answers,
+            question_count=test.question_count,
+            variant_count=test.variant_count,
+            answer_key=test.answer_key or {},
+        )
+    except AnswerValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    attempt.detected = dict(corrected_answers)
+    merged: dict[str, Optional[str]] = dict(attempt.detected or {})
+    merged.update(corrected_answers)
+
+    gr = grade(merged, test.answer_key)
+
+    attempt.detected = merged
     attempt.score = gr.score
     attempt.total = gr.total
     attempt.percent = gr.percent
     attempt.detail = gr.detail
     attempt.needs_review = False  # Ustoz tekshirdi
     attempt.status = "done"
+    # Review izi: admin panelidagi "qo'lda tuzatilgan" filtri va OMR
+    # inspektori shu maydonlarga qaraydi.
+    attempt.manual_override = True
+    attempt.reviewed_by_id = user.id
+    attempt.reviewed_at = datetime.now(timezone.utc)
 
     await db.commit()
     await db.refresh(attempt)

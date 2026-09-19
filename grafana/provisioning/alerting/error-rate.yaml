@@ -1,0 +1,54 @@
+# Loki'dagi ERROR yozuvlari bo'yicha alert qoidasi (weaknesses.md №37).
+#
+# Ilgari hech qanday alert yo'q edi: worker yiqilsa yoki bot xato bersa buni
+# faqat foydalanuvchi shikoyati orqali bilinardi.
+#
+# Kontakt nuqtasi (Telegram/email) Grafana UI'da yoki
+# `provisioning/alerting/contactpoints.yaml` da sozlanadi — u yerda sir
+# (bot token, webhook URL) bo'lgani uchun repoga qo'yilmaydi.
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: omr-errors
+    folder: OMR
+    interval: 1m
+    rules:
+      - uid: omr-error-rate
+        title: "OMR: ERROR loglari ko'p"
+        condition: threshold
+        for: 5m
+        annotations:
+          summary: >-
+            So'nggi 5 daqiqada {{ $values.count }} ta ERROR yozuvi.
+            `docker compose logs -f api bot worker` bilan tekshiring.
+        labels:
+          severity: warning
+        noDataState: OK
+        execErrState: Alerting
+        data:
+          - refId: count
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: loki
+            model:
+              refId: count
+              # Barcha servislardagi ERROR yozuvlari.
+              expr: 'sum(count_over_time({service=~".+", level="ERROR"}[5m]))'
+              queryType: instant
+          - refId: threshold
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: __expr__
+            model:
+              refId: threshold
+              type: threshold
+              expression: count
+              conditions:
+                - evaluator:
+                    type: gt
+                    # 5 daqiqada 10 tadan ko'p ERROR — tekshirish kerak.
+                    # Bitta-yarimta xato (buzuq skan) normal holat.
+                    params: [10]

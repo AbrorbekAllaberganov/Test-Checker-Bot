@@ -25,6 +25,7 @@ def _make_sub(
     monthly_limit: int | None = 100,
     status: str = "active",
     ends_at: datetime | None = None,
+    anchor_day: int | None = None,
 ) -> Subscription:
     """
     Bazaga tegmasdan Subscription nusxasini yasash.
@@ -42,6 +43,7 @@ def _make_sub(
         period_end=period_end,
         scans_used=scans_used,
         bonus_credits=bonus,
+        anchor_day=anchor_day,
     )
     # `plan` — relationship, shu sababli HAQIQIY ORM ob'ekti bo'lishi shart
     # (SimpleNamespace SQLAlchemy instrumentatsiyasiga tushmaydi).
@@ -71,6 +73,24 @@ class TestNextPeriodEnd:
         """31-kun fevralda mavjud emas — 28 ga qisqartiriladi."""
         start = datetime(2026, 1, 31, tzinfo=timezone.utc)
         assert _next_period_end(start) == datetime(2026, 2, 28, tzinfo=timezone.utc)
+
+    def test_anchor_day_restores_original_day(self):
+        """
+        T-39: langar kun saqlanadi — 28-fevraldan keyin yana 31 ga qaytadi.
+
+        Ilgari sana bir marta qisqarib, keyin o'sha kundan davom etardi va
+        obuna har yili bir necha kunga oldinga siljirdi (weaknesses.md №18).
+        """
+        feb = datetime(2026, 2, 28, tzinfo=timezone.utc)
+        assert _next_period_end(feb, 31) == datetime(2026, 3, 31, tzinfo=timezone.utc)
+
+    def test_anchor_day_clamps_in_short_month(self):
+        jan = datetime(2026, 1, 31, tzinfo=timezone.utc)
+        assert _next_period_end(jan, 31) == datetime(2026, 2, 28, tzinfo=timezone.utc)
+
+    def test_anchor_day_in_leap_year(self):
+        jan = datetime(2028, 1, 31, tzinfo=timezone.utc)
+        assert _next_period_end(jan, 31) == datetime(2028, 2, 29, tzinfo=timezone.utc)
 
 
 class TestEnsurePeriod:

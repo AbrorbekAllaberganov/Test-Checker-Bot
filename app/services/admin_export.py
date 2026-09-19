@@ -18,6 +18,7 @@ from app.models.student import Student
 from app.models.subscription import LIVE_STATUSES, Subscription
 from app.models.test import Test
 from app.models.titul import Titul
+from app.core.time import to_local_naive
 from app.models.user import User
 from app.services.excel import _style_sheet, _to_bytes
 
@@ -134,8 +135,9 @@ async def export_teachers_excel(db: AsyncSession) -> bytes:
                 r.scans_count or 0,
                 "Ha" if r.is_blocked else "Yo'q",
                 r.blocked_reason or "",
-                # Excel timezone-aware datetime'ni qabul qilmaydi.
-                r.created_at.replace(tzinfo=None) if r.created_at else None,
+                # Excel timezone-aware datetime'ni qabul qilmaydi; vaqt lokal
+                # (APP_TIMEZONE) ko'rinishda beriladi.
+                to_local_naive(r.created_at) if r.created_at else None,
             ]
         )
 

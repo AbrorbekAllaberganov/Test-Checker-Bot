@@ -31,6 +31,7 @@ from app.models.student import Student
 from app.models.subscription import Subscription
 from app.models.test import Test
 from app.models.titul import Titul
+from app.core.time import local_day_start
 from app.models.user import User
 
 log = logging.getLogger(__name__)
@@ -56,8 +57,15 @@ class KpiSummary:
 
 
 def _utc_today_start() -> datetime:
-    now = datetime.now(timezone.utc)
-    return now.replace(hour=0, minute=0, second=0, microsecond=0)
+    """
+    Bugungi kun boshi (UTC tz-aware).
+
+    Kun chegarasi APP_TIMEZONE (Toshkent) bo'yicha olinadi — UTC kun boshi
+    mahalliy 05:00 ga to'g'ri keladi va ertalabki skanlar "kecha"ga tushib
+    qolardi (weaknesses.md №28). Grafiklardagi kun yorliqlari ham shu
+    chegaraga tayanadi.
+    """
+    return local_day_start()
 
 
 async def kpi_summary(db: AsyncSession) -> KpiSummary:

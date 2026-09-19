@@ -10,6 +10,12 @@ __pycache__/
 *.pdf
 calibration_*.png
 
+# Kalibrlash/debug skanlari — HAQIQIY o'quvchi varaqlari bo'lishi mumkin
+# (F.I.Sh + QR). Skriptlar git'da qoladi, rasmlar yo'q (weaknesses.md №37).
+scratch/*.png
+scratch/*.jpg
+scratch/*.jpeg
+
 # Admin panel (React / Vite)
 admin-ui/node_modules/
 admin-ui/dist/

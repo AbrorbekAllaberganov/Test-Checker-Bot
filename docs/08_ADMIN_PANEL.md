@@ -124,6 +124,26 @@ bazada qatori yo'q va kod yuborilmaydi).
   ekanini oshkor qilmaydi (user enumeration'dan himoya).
 - 5 ta noto'g'ri urinishdan keyin kod bekor qilinadi.
 - Bloklangan admin `403` oladi, token amal qilsa ham.
+- **IP bo'yicha limit** (T-30): `otp/request` 10/soat, `otp/verify`
+  20/10 daq, `telegram` 30/10 daq — oshsa `429`. Bu `telegram_id`
+  limitidan MUSTAQIL: aks holda bitta IP'dan barcha adminlarga
+  navbatma-navbat kod spam qilish mumkin edi.
+- **IP manbai** — `request.client.host`. `X-Forwarded-For` ga
+  to'g'ridan-to'g'ri ISHONILMAYDI (uni klient o'zi yozib yuborardi);
+  uvicorn `--proxy-headers --forwarded-allow-ips=$TRUSTED_PROXY_IPS`
+  bilan ishga tushadi va header'ni faqat ishonchli proxy'dan qabul qiladi.
+- **Refresh rotatsiyasi:** har `POST /refresh` eski tokenni darhol bekor
+  qiladi (Redis: `admin:revoked:jti:*`). Allaqachon ishlatilgan refresh
+  qayta kelsa — token o'g'irlangan deb hisoblanadi va butun sessiya
+  **oilasi** (`fam` claim) bekor qilinadi.
+- **Logout:** `POST /api/admin/auth/logout` access va refresh tokenlarni,
+  shuningdek butun oilani bekor qiladi. Frontend `logout()` shuni chaqiradi —
+  ilgari faqat `localStorage` tozalanardi va token 14 kun ishlayverardi.
+- **Redis yotsa** bekor qilish tekshiruvi o'tkazib yuboriladi (fail-open) —
+  aks holda Redis uzilishi butun panelni yiqitardi. Oyna access token
+  muddati (30 daqiqa) bilan cheklangan.
+- **`/docs`, `/redoc`, `/openapi.json`** prod'da yopiq
+  (`ENABLE_API_DOCS=false`). Dev'da `.env` da `true` qiling.
 
 ---
 
@@ -330,14 +350,81 @@ cd admin-ui && npm run typecheck && npm run build
 Testlar:
 
 ```bash
+# DB'siz testlar (DB testlari skip bo'ladi)
 docker compose run --rm --no-deps api pytest app/tests -q
+
+# To'liq to'plam — ALOHIDA test bazasi bilan (bir marta yarating):
+docker compose exec -T postgres psql -U omruser -d postgres \
+    -c "CREATE DATABASE omrdb_test"
+
+docker compose run --rm --no-deps \
+  -e TEST_DATABASE_URL="postgresql+asyncpg://omruser:PAROL@postgres:5432/omrdb_test" \
+  api pytest app/tests -q
 ```
+
+> `TEST_DATABASE_URL` ichida **`test` so'zi bo'lishi shart** — aks holda
+> pytest darhol to'xtaydi. Bu prod bazasiga yozib yuborishdan himoya
+> (weaknesses.md №34). Har test bitta tranzaksiyada ishlaydi va oxirida
+> rollback bo'ladi, shu sababli baza toza qoladi.
 
 Loglar:
 
 ```bash
 docker compose logs -f api
 ```
+
+---
+
+### 8.4. Zaxira nusxa (backup)
+
+Avtomatlashtirish serverga bog'liq — quyidagilar namuna.
+
+**Baza** (kuniga bir marta, cron):
+
+```bash
+0 3 * * * cd /srv/omr && docker compose exec -T postgres \
+    pg_dump -U omruser omrdb | gzip > /backup/omrdb_$(date +\%F).sql.gz
+```
+
+> Cron ichida `%` ni `\%` qilib ekranlash SHART, aks holda crontab uni
+> qator oxiri deb o'qiydi.
+
+Tiklash:
+
+```bash
+gunzip -c /backup/omrdb_2026-09-19.sql.gz \
+  | docker compose exec -T postgres psql -U omruser -d omrdb
+```
+
+**Fayllar** (titul PDF'lari va skanlar):
+
+```bash
+docker run --rm \
+  -v test-checker-bot_pdf_data:/pdfs:ro \
+  -v test-checker-bot_uploads_data:/uploads:ro \
+  -v /backup:/backup alpine \
+  tar czf /backup/files_$(date +%F).tar.gz /pdfs /uploads
+```
+
+Eski nusxalarni tozalash: `find /backup -name '*.gz' -mtime +30 -delete`.
+
+> `debug_data` va `temp_uploads` zaxiralanmaydi — ular qayta tiklanadigan
+> yoki vaqtinchalik ma'lumot.
+
+---
+
+### 8.5. Monitoring va alert
+
+- `GET /health` — DB (`SELECT 1`) va Redis (`PING`) ni tekshiradi va
+  nosozda **503** qaytaradi. Docker healthcheck shunga tayanadi.
+  Faqat jarayon tirikligi kerak bo'lsa: `GET /health?deep=false`.
+- Grafana alert qoidasi: `grafana/provisioning/alerting/error-rate.yaml` —
+  5 daqiqada 10 tadan ko'p `level=ERROR` yozuvi bo'lsa ogohlantiradi.
+  **Kontakt nuqtasi (Telegram/email) repoga qo'yilmagan** — u sir
+  (bot token/webhook) bo'lgani uchun Grafana UI'da sozlanadi:
+  *Alerting → Contact points → Add*.
+- `celery beat` konteyneri kuniga bir marta `cleanup_temp_files` ni
+  ishga tushiradi (`temp_uploads` cheksiz o'smasin).
 
 ---
 

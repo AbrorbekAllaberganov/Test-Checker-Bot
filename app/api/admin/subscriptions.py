@@ -23,6 +23,7 @@ from app.models.enums import AuditAction
 from app.models.plan import Plan
 from app.models.subscription import LIVE_STATUSES, Subscription
 from app.models.user import User
+from app.services.search import LIKE_ESCAPE, like_pattern
 from app.schemas.admin.common import Page
 from app.schemas.admin.subscriptions import (
     AssignPlanIn,
@@ -221,8 +222,11 @@ async def list_subscriptions(
         if status_filter:
             stmt = stmt.where(Subscription.status == status_filter)
         if search:
-            pattern = f"%{search.strip()}%"
-            conditions = [User.full_name.ilike(pattern), User.username.ilike(pattern)]
+            pattern = like_pattern(search)
+            conditions = [
+                User.full_name.ilike(pattern, escape=LIKE_ESCAPE),
+                User.username.ilike(pattern, escape=LIKE_ESCAPE),
+            ]
             digits = search.strip().lstrip("@")
             if digits.isdigit():
                 conditions.append(User.telegram_id == int(digits))

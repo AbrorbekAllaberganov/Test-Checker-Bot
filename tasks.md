@@ -4,8 +4,14 @@ Tuzilgan sana: 2026-09-16. Manba: `weaknesses.md` (2026-09-15 auditi).
 Har bir band uchun kod **qayta tekshirildi** — audit yozilgandan keyin ba'zi
 narsalar allaqachon tuzatilgan. Holat ustuni shu tekshiruv natijasi.
 
-**FAZA 0, FAZA 1 va FAZA 2 bajarildi** (FAZA 2 — 2026-09-16). Endi sizning qo'lingizdagi ishlar (token revoke,
-server `.env`, deploy, tekshirish) alohida faylda: **`QOLGAN_ISHLAR.md`**.
+**HAMMA FAZA BAJARILDI** (FAZA 0-2 — 2026-09-16; FAZA 3-5 — 2026-09-19).
+Endi sizning qo'lingizdagi ishlar (token revoke, server `.env`, deploy,
+tekshirish) alohida faylda: **`QOLGAN_ISHLAR.md`**.
+
+Foydalanuvchi qarorlari (2026-09-19):
+  • **T-21** → variant **A**: 5 variantli test tanlovdan olib tashlandi.
+  • **T-25** → HEIC **rad etiladi** (foydalanuvchiga tushuntirish bilan).
+  • **T-24** → ZIP asosiy; "alohida" `TITUL_SINGLE_SEND_MAX` (20) gacha.
 
 Bu fayl AI agent (Claude Code va sh.k.) yoki dasturchi uchun ish buyrug'i.
 Har task mustaqil bajariladigan qilib yozilgan: muammo → aniq fayl/qator →
@@ -55,35 +61,35 @@ Holat belgilari: ❌ ochiq · 🟡 qisman tuzatilgan · ✅ tuzatilgan (task yo'
 | 6 | Docker portlari ochiq, Redis parolsiz | ✅ hammasi 127.0.0.1 + Redis parol | T-03 |
 | 7 | `.dockerignore` / `.env` image'da / root / `--reload` | ✅ | T-04 |
 | 8 | Deploy tartibi (migratsiya keyin) | ✅ migratsiya oldin + CI testlar | T-05 |
-| 9 | `/attempts/scan` buzuq | ❌ | T-26 |
+| 9 | `/attempts/scan` buzuq | ✅ `titul_id=None`, oqimli yozish, UUID nom, `chat_id` majburiy | T-26 ✅ |
 | 10 | Kvota/blok chaqirilmaydi | ✅ skan/guruh/o'quvchi limitlari, `/start`'da obuna, middleware ro'yxat+blok | T-09 ✅, T-17 ✅ |
 | 11 | FSM matn bo'lmagan xabarda yiqiladi | ✅ `F.text` + `fsm_non_text` fallback, skan `StateFilter(None)` | T-11 ✅ |
-| 12 | 5 variant ishlamaydi | ❌ | T-21 (qaror kerak) |
-| 13 | 180° burilgan varaq | ❌ | T-20 |
-| 14 | Worker resurs DoS | ❌ | T-18 |
-| 15 | `omr_task` xato oqimi / `bubble_data` | 🟡 `bubble_data`/`confidence` yoziladi (`tasks.py:346`); xabar+retry hali bor | T-19 |
+| 12 | 5 variant ishlamaydi | ✅ variant A: tanlovdan olib tashlandi | T-21 ✅ |
+| 13 | 180° burilgan varaq | ✅ QR orqali orientatsiya + anchor sanity | T-20 ✅ |
+| 14 | Worker resurs DoS | ✅ bir marta yuklash, sahifa/piksel limiti, vaqt limiti, engine singleton | T-18 ✅ |
+| 15 | `omr_task` xato oqimi / `bubble_data` | ✅ doimiy/vaqtinchalik ajratildi, istisno matni yuborilmaydi | T-19 ✅ |
 | 16 | Telegram HTML injection | ✅ `escape()` hamma joyda | T-12 ✅ |
 | 17 | Excel/CSV formula injection | ✅ `safe_cell`/`safe_filename` | T-13 ✅ |
-| 18 | Obuna muddati tugamaydi | 🟡 `ends_at` tekshiriladi (`subscriptions.py:166`), `scans_used` ko'chmaydi; faqat davr siljishi qoldi | T-39 (past) |
-| 19 | Admin OTP oqimi | 🟡 enumeratsiya tuzatilgan; IP limit, XFF, refresh rotatsiya, logout yo'q | T-30 |
-| 20 | initData replay | ❌ | T-28 |
-| 21 | CORS `*`+credentials, `/docs` ochiq | 🟡 CORS tuzatilgan (`main.py:43-59`); `/docs` ochiq | T-29 |
-| 22 | Telegram flood (titul yuborish) | ❌ | T-24 |
-| 23 | Ko'p sahifali PDF | ❌ | T-18 |
-| 24 | Qo'lda tuzatish nomuvofiq | 🟡 admin `override_answers` to'g'ri; `web_api` va `PATCH /attempts` emas | T-27 |
+| 18 | Obuna muddati tugamaydi | ✅ `ends_at` + `anchor_day` (004) | T-39 ✅ |
+| 19 | Admin OTP oqimi | ✅ IP limit, `request.client.host`, refresh rotatsiya + oila, logout | T-30 ✅ |
+| 20 | initData replay | ✅ `auth_date` majburiy + muddat (24 soat / admin 5 daq) | T-28 ✅ |
+| 21 | CORS `*`+credentials, `/docs` ochiq | ✅ `ENABLE_API_DOCS=false` | T-29 ✅ |
+| 22 | Telegram flood (titul yuborish) | ✅ `tituls_batch_task` (diskda ZIP, bo'laklar), `RetryAfter` hurmat qilinadi | T-24 ✅ |
+| 23 | Ko'p sahifali PDF | ✅ 1-sahifa + ogohlantirish | T-18 ✅ |
+| 24 | Qo'lda tuzatish nomuvofiq | ✅ umumiy `validate_answers`, merge + qayta hisob, `manual_override` | T-27 ✅ |
 | 25 | O'lik UI | ✅ `results:` handler, reply.py o'chirildi, `telegram_id` UI'dan olindi | T-14 ✅ |
 | 26 | Foydalanuvchi ma'lumoti eskiradi | ✅ middleware yaratadi/yangilaydi, handlerlar `db_user` oladi | T-15 ✅ |
 | 27 | `parse_key` takror raqam | ✅ | T-16 ✅ |
-| 28 | Timezone | 🟡 naive tuzatilgan; "bugun" UTC bo'yicha | T-32 |
-| 29 | `get_db` har GET'da commit | ❌ | T-33 |
-| 30 | Skan qabul nozikliklari | ❌ | T-25 |
-| 31 | Loki handler chegarasiz | ❌ | T-34 |
-| 32 | Celery natijalari saqlanadi | ❌ | T-23 |
-| 33 | `fill_ratio` sekin | ❌ | T-22 |
-| 34 | Testlar real bazaga yozadi | ❌ (`test_web_api.py`) | T-35 |
-| 35 | Admin API yarim / `ilike` escape | 🟡 router ulangan; `ilike` escape yo'q (6 joy) | T-31 |
-| 36 | Docs/kod nomuvofiqligi | ❌ | T-36 |
-| 37 | Past: Dockerfile, scratch, `attempts.user_id`, backup, metrik | ❌ | T-04, T-37, T-38 |
+| 28 | Timezone | ✅ `core/time.py` + `APP_TIMEZONE` | T-32 ✅ |
+| 29 | `get_db` har GET'da commit | ✅ faqat `new/dirty/deleted` bo'lsa | T-33 ✅ |
+| 30 | Skan qabul nozikliklari | ✅ UUID nom, HEIC rad, `uploads_dir`, kunlik tozalash | T-25 ✅ |
+| 31 | Loki handler chegarasiz | ✅ `maxsize=2000`, batch, eksponensial backoff | T-34 ✅ |
+| 32 | Celery natijalari saqlanadi | ✅ backend olib tashlandi, `task_ignore_result` | T-23 ✅ |
+| 33 | `fill_ratio` sekin | ✅ ROI niqob | T-22 ✅ |
+| 34 | Testlar real bazaga yozadi | ✅ `TEST_DATABASE_URL` + tranzaksiya/rollback fixture | T-35 ✅ |
+| 35 | Admin API yarim / `ilike` escape | ✅ `services/search.like_pattern` (6 joy) | T-31 ✅ |
+| 36 | Docs/kod nomuvofiqligi | ✅ `docs/06`, `docs/05`, `docs/08`, `.env.example` | T-36 ✅ |
+| 37 | Past: Dockerfile, scratch, `attempts.user_id`, backup, metrik | ✅ multi-stage + HEALTHCHECK, scratch rasmlari git'dan, `submitted_by_id` (004), backup/alert hujjati, chuqur `/health` | T-37 ✅, T-38 ✅ |
 
 ---
 
@@ -763,6 +769,8 @@ Test: `test_key_parse.py` ga `pytest.raises(ValueError, match="ikki marta")`.
 
 ## T-18 · Worker resurslari: faylni bir marta yuklash, sahifa limiti, vaqt limiti, engine singleton
 
+**✅ BAJARILDI (2026-09-19)** — faylni bir marta yuklash, `max_pages`, `MAX_IMAGE_PIXELS`, vaqt limitlari, engine singleton, ko'p sahifa ogohlantirishi.
+
 - **Zaiflik:** №14, №23 · **Prioritet:** 🟠 · **Hajm:** M
 - **Holat:** ❌ `tasks.py:218` `read_qr_from_file` → `load_image` →
   `pdf_to_images` **barcha** sahifani rasterizatsiya qiladi; `:260` `run()`
@@ -803,6 +811,8 @@ PNG → "Rasm juda katta" xatosi, worker tirik; `celery inspect conf` da limitla
 
 ## T-19 · `omr_task` xato oqimi: doimiy/vaqtinchalik xatolarni ajratish
 
+**✅ BAJARILDI (2026-09-19)** — `_is_permanent()` — doimiy xatoda retry yo'q, istisno matni foydalanuvchiga yuborilmaydi.
+
 - **Zaiflik:** №15 · **Prioritet:** 🟠 · **Hajm:** S
 - **Holat:** 🟡 `bubble_data`/`confidence` yoziladi (`tasks.py:346-354`).
   `:383-401` har istisnoda xabar yuborib keyin `self.retry` — 3 marta bir xil
@@ -828,6 +838,8 @@ Istisno matni (`str(exc)`) foydalanuvchiga **yuborilmasin** (T-12). `pdf_task`
 ---
 
 ## T-20 · 180° burilgan varaq va anchor sanity tekshiruvi
+
+**✅ BAJARILDI (2026-09-19)** — `read_qr_located()` + warp fazosidagi kvadrant tekshiruvi (180° to'g'rilanadi, 90° → xato); anchor maydoni nisbiy, to'rtburchak sanity + kombinatsiyalar.
 
 - **Zaiflik:** №13 · **Prioritet:** 🟠 · **Hajm:** M
 - **Holat:** ❌ `omr/anchors.py:24-45` `order_points` rasm burchaklarini
@@ -867,6 +879,8 @@ Istisno matni (`str(exc)`) foydalanuvchiga **yuborilmasin** (T-12). `pdf_task`
 
 ## T-21 · 5 variantli test — layout'ga `E` qo'shish yoki tanlovdan olib tashlash
 
+**✅ BAJARILDI (2026-09-19)** — **variant A** — 5 variant tanlovdan olib tashlandi, `VALID_OPTIONS="ABCD"`, eski testlarga ogohlantirish.
+
 - **Zaiflik:** №12 · **Prioritet:** 🟠 · **Hajm:** A: XS / B: L
 - **Holat:** ❌ `omr/layout.py:30,37,44` `options: ["A","B","C","D"]`;
   `inline.py:100` `vcount:5`; `tests.py:148,168` `"ABCDE"[:vcount]`.
@@ -894,6 +908,8 @@ bo'yicha grid tanlanadi, muammo yo'q.
 
 ## T-22 · `fill_ratio` — to'liq kadr niqobi o'rniga ROI
 
+**✅ BAJARILDI (2026-09-19)** — ROI niqob (`bubbles.fill_ratio`).
+
 - **Zaiflik:** №33 · **Prioritet:** 🟡 · **Hajm:** XS
 - **Holat:** ❌ `omr/bubbles.py:39-41` har doira uchun `np.zeros_like(warped_bin)`
   (1449×2134) — 360 doira × 3MB.
@@ -911,6 +927,8 @@ Natija o'zgarmasligini `test_omr_regression` (fixture bo'lsa) yoki sintetik
 
 ## T-23 · Celery natijalarini saqlamaslik
 
+**✅ BAJARILDI (2026-09-19)** — backend olib tashlandi, `task_ignore_result=True`.
+
 - **Zaiflik:** №32 · **Prioritet:** 🟡 · **Hajm:** XS
 - **Holat:** ❌ `celery_app.py:15` `backend=redis`, `:30` `result_expires=86400`.
   `grep -rn "AsyncResult\|\.get(timeout" app` — natija hech qayerda o'qilmaydi
@@ -923,6 +941,8 @@ qoladi (informativ).
 ---
 
 ## T-24 · Titullarni yuborishda Telegram flood va ZIP
+
+**✅ BAJARILDI (2026-09-19)** — `tituls_batch_task` — diskda ZIP + bo'laklar; `RetryAfter` hurmat qilinadi; "alohida" 20 tagacha.
 
 - **Zaiflik:** №22 · **Prioritet:** 🟠 · **Hajm:** M
 - **Holat:** ❌ `tests.py:278-280` har titul uchun `pdf_task.delay(tid, chat_id)`
@@ -950,6 +970,8 @@ qoladi (informativ).
 ---
 
 ## T-25 · Skan qabul qilish nozikliklari
+
+**✅ BAJARILDI (2026-09-19)** — UUID fayl nomi, HEIC rad + tushuntirish, `uploads_dir` ga ko'chirish, `cleanup_temp_files` (celery beat).
 
 - **Zaiflik:** №30 · **Prioritet:** 🟡 · **Hajm:** S
 - **Holat:** ❌ `scan.py:42` fayl nomi `{file_id}{suffix}` — bir xil rasm
@@ -980,6 +1002,8 @@ qoladi (informativ).
 
 ## T-26 · `/attempts/scan` ni tuzatish
 
+**✅ BAJARILDI (2026-09-19)** — `titul_id=None`, oqimli yozish (413), UUID nom, `chat_id` majburiy, `AttemptOut.titul_id` Optional.
+
 - **Zaiflik:** №9 · **Prioritet:** 🟠 · **Hajm:** S
 - **Holat:** ❌ `api/routes/attempts.py:62` `titul_id=1`; `:57`
   `scan_{id(content)}`; `:47` butun fayl RAM'da; `schemas/attempts.py:12`
@@ -1008,6 +1032,8 @@ qoladi (informativ).
 
 ## T-27 · Qo'lda tuzatishni izchil qilish (`web_api` review, `PATCH /attempts`)
 
+**✅ BAJARILDI (2026-09-19)** — `grading.validate_answers()` ikkala joyda; merge + qayta hisob; `manual_override`/`reviewed_*`.
+
 - **Zaiflik:** №24 · **Prioritet:** 🟡 · **Hajm:** S · **Bog'liqlik:** T-07
 - **Holat:** 🟡 `admin/scans.py:369-460 override_answers` — namuna
   (validatsiya, `manual_override`, `reviewed_by_id`, `reviewed_at`, audit).
@@ -1031,6 +1057,8 @@ qoladi (informativ).
 
 ## T-28 · `initData` eskirish muddati
 
+**✅ BAJARILDI (2026-09-19)** — `validate_init_data(max_age)`, `auth_date` majburiy, Mini App 24 soat / admin 5 daqiqa.
+
 - **Zaiflik:** №20 · **Prioritet:** 🟠 · **Hajm:** XS
 - **Holat:** ❌ `api/routes/auth.py:36` `_INIT_DATA_MAX_AGE = 0`.
 
@@ -1046,6 +1074,8 @@ ochiq qolsa 401 → frontend `Telegram.WebApp.close()`/qayta ochish xabari
 
 ## T-29 · `/docs`, `/redoc` ni prod'da yopish
 
+**✅ BAJARILDI (2026-09-19)** — `ENABLE_API_DOCS=false` → `/docs`, `/redoc`, `/openapi.json` yopiq.
+
 - **Zaiflik:** №21 (qoldiq) · **Prioritet:** 🟡 · **Hajm:** XS
 - **Holat:** 🟡 CORS tuzatilgan. `main.py:36-37` docs ochiq.
 
@@ -1056,6 +1086,8 @@ ochiq qolsa 401 → frontend `Telegram.WebApp.close()`/qayta ochish xabari
 ---
 
 ## T-30 · Admin auth: IP rate limit, ishonchli proxy, refresh rotatsiyasi, logout
+
+**✅ BAJARILDI (2026-09-19)** — IP rate limit, `client_ip` → `request.client.host`, refresh rotatsiyasi + oila, `POST /logout`, frontend chaqiruvi.
 
 - **Zaiflik:** №19 (qoldiq) · **Prioritet:** 🟠 · **Hajm:** M · **Bog'liqlik:** T-04 (proxy headers)
 - **Holat:** 🟡 enumeratsiya tuzatilgan (`admin/auth.py:160-172`). Qolgan:
@@ -1085,6 +1117,8 @@ ochiq qolsa 401 → frontend `Telegram.WebApp.close()`/qayta ochish xabari
 
 ## T-31 · `ilike` da `%`/`_` escape
 
+**✅ BAJARILDI (2026-09-19)** — `app/services/search.py: like_pattern()` + `escape="\\"` (6 joy).
+
 - **Zaiflik:** №35 (qoldiq) · **Prioritet:** 🟡 · **Hajm:** XS
 - **Holat:** ❌ 6 joy: `admin/users.py:120-121`, `admin/subscriptions.py:225`,
   `admin/explorer.py:88`, `:286`, `:364`.
@@ -1102,6 +1136,8 @@ faqat literal `100%` ni topadi.
 ---
 
 ## T-32 · "Bugun" O'zbekiston vaqti bo'yicha
+
+**✅ BAJARILDI (2026-09-19)** — `app/core/time.py` (`local_day_start`, `to_local`, `to_local_naive`) + `APP_TIMEZONE`.
 
 - **Zaiflik:** №28 · **Prioritet:** 🟡 · **Hajm:** XS
 - **Holat:** 🟡 naive tuzatilgan; `web_api.py:58-60` va
@@ -1123,6 +1159,15 @@ tuzoq 2) qilinsin.
 
 ## T-33 · `get_db` faqat o'zgarish bo'lsa commit qilsin
 
+**✅ BAJARILDI (2026-09-19)** — `_session_has_writes()`.
+
+> ⚠️ **Rejadagi yechim yetarli emas edi:** `flush()` dan keyin
+> `session.dirty` BO'SHAYDI, shu sababli faqat `new/dirty/deleted` ga
+> qarash yozuvlarni indamay yo'qotardi (masalan `get_active_subscription()`
+> obunani `expired` qilib faqat `flush()` qiladi). Yechim: `after_flush`
+> event listener sessiyaga bayroq qo'yadi; `get_db` ikkalasini ham
+> tekshiradi. Qopqoq: `app/tests/test_db_commit.py`.
+
 - **Zaiflik:** №29 · **Prioritet:** 🟢 · **Hajm:** XS
 - **Holat:** ❌ `core/db.py:57-66`.
 
@@ -1135,6 +1180,8 @@ qo'shing.
 ---
 
 ## T-34 · Loki handler: chegaralangan navbat
+
+**✅ BAJARILDI (2026-09-19)** — `maxsize=2000`, `put_nowait` + drop, 50 tali batch, eksponensial backoff.
 
 - **Zaiflik:** №31 · **Prioritet:** 🟡 · **Hajm:** XS
 - **Holat:** ❌ `core/logging.py:14` `queue.Queue()` chegarasiz; `:54-57`
@@ -1150,6 +1197,8 @@ to'lgan"). `_worker` da 50 tagacha yozuvni bitta so'rovga yig'ing
 # FAZA 5 — Sifat va hujjat
 
 ## T-35 · Testlarni izolyatsiya qilish
+
+**✅ BAJARILDI (2026-09-19)** — `TEST_DATABASE_URL` majburiy + 'test' tekshiruvi, alembic upgrade, tranzaksiya/rollback fixture (`db_session`, `api_client`).
 
 - **Zaiflik:** №34 · **Prioritet:** 🟠 · **Hajm:** M
 - **Holat:** ❌ `test_web_api.py:24-31,150-167` `get_session_factory()`
@@ -1177,6 +1226,8 @@ to'lgan"). `_worker` da 50 tagacha yozuvni bitta so'rovga yig'ing
 
 ## T-36 · Hujjat/kod nomuvofiqligi
 
+**✅ BAJARILDI (2026-09-19)** — `docs/06_API.md` koddan qayta yozildi, `docs/05` ga "Rejalashtirilgan" bo'limi, `docs/08` §8.4-8.5, `.env.example`.
+
 - **Zaiflik:** №36 · **Prioritet:** 🟢 · **Hajm:** S
 
 **Yechim.** `docs/06_API.md` ni haqiqiy route'lar bilan yangilang
@@ -1189,6 +1240,8 @@ muammolar" bo'limini bajarilgan tasklardan keyin yangilang.
 ---
 
 ## T-37 · `attempts.submitted_by_id` (migratsiya 004)
+
+**✅ BAJARILDI (2026-09-19)** — `attempts.submitted_by_id` (004) + `owned_attempt`/`owner_filter_for_attempts` OUTER JOIN + admin "Kim yubordi" ustuni.
 
 - **Zaiflik:** №37 · **Prioritet:** 🟢 · **Hajm:** S · **Bog'liqlik:** T-09 dan keyin foydali
 
@@ -1204,6 +1257,8 @@ skanlar ham Mini App'da ko'rinadi. Admin skan ro'yxatiga "Kim yubordi" ustuni
 ---
 
 ## T-38 · Past prioritetli tozalash
+
+**✅ BAJARILDI (2026-09-19)** — scratch rasmlari git'dan, backup hujjati, chuqur `/health`, Grafana alert qoidasi, Dockerfile multi-stage + HEALTHCHECK.
 
 - **Zaiflik:** №37 · **Prioritet:** 🟢 · **Hajm:** S
 
@@ -1224,6 +1279,8 @@ skanlar ham Mini App'da ko'rinadi. Admin skan ro'yxatiga "Kim yubordi" ustuni
 
 ## T-39 · Obuna davri "anchor day" (ixtiyoriy)
 
+**✅ BAJARILDI (2026-09-19)** — `subscriptions.anchor_day` (004) + `_next_period_end(start, anchor_day)`.
+
 - **Zaiflik:** №18 (qoldiq) · **Prioritet:** 🟢 · **Hajm:** S
 - **Holat:** 🟡 `subscriptions.py:86-102` izohda ongli murosa deb yozilgan:
   31-kunda boshlangan obuna bir marta 28/30 ga surilib keyin o'sha kundan
@@ -1236,17 +1293,17 @@ uzatadi. `test_subscriptions.py` ga 31-yanvar → 28-fevral → 31-mart testi.
 
 ---
 
-## 3. Foydalanuvchi qarori kerak bo'lgan bandlar
+## 3. Foydalanuvchi qarorlari
 
-| Task | Savol |
-|---|---|
-| T-01 | Git tarixini qayta yozamizmi (`filter-repo`)? Barcha klonlar sinadi. |
-| T-03 | Serverda reverse proxy (nginx/caddy) bormi? Bo'lmasa API portini yopib bo'lmaydi. |
-| T-05 | Serverda `docker-compose` (v1) mi yoki `docker compose` (v2)? |
-| T-15 | Ro'yxatdan o'tish faqat `/start` orqalimi, yoki birinchi xabarda avtomatik? |
-| T-21 | 5 variant: hozircha o'chiramizmi (A) yoki layout'ga E qo'shib kalibrlaymizmi (B)? |
-| T-25 | HEIC: rad etamizmi yoki `pillow-heif` bilan konvertatsiya? |
-| T-24 | Titullar faqat ZIP bo'lib kelsinmi, yoki "alohida" varianti (sekin, limitli) qolsinmi? |
+| Task | Savol | Qaror |
+|---|---|---|
+| T-01 | Git tarixini qayta yozamizmi (`filter-repo`)? | **Ochiq** — barcha klonlar sinadi, foydalanuvchi hal qiladi |
+| T-03 | Serverda reverse proxy bormi? | Hal qilindi (`API_BIND_HOST`) |
+| T-05 | `docker-compose` (v1) mi yoki `docker compose` (v2)? | Hal qilindi (v2) |
+| T-15 | Ro'yxatdan o'tish `/start` orqalimi? | Hal qilindi — middleware birinchi xabarda yaratadi |
+| T-21 | 5 variant: o'chiramizmi (A) yoki layout'ga E (B)? | **A** (2026-09-19) — o'chirildi; B alohida sprint |
+| T-25 | HEIC: rad etamizmi yoki `pillow-heif`? | **Rad etish** (2026-09-19) — tushuntirish xabari bilan |
+| T-24 | Titullar faqat ZIP bo'lsinmi? | **ZIP + alohida (limitli)** (2026-09-19) — `TITUL_SINGLE_SEND_MAX=20` |
 
 ---
 

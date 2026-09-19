@@ -31,12 +31,20 @@ log = logging.getLogger(__name__)
 
 
 def client_ip(request: Optional[Request]) -> Optional[str]:
-    """Reverse proxy ortidagi haqiqiy IP (X-Forwarded-For birinchi qiymati)."""
+    """
+    So'rov kelgan IP.
+
+    `X-Forwarded-For` ga TO'G'RIDAN-TO'G'RI ISHONMAYMIZ (weaknesses.md №19):
+    uni istalgan klient o'zi yozib yuborishi mumkin edi — audit jurnalidagi
+    IP soxtalashtirilar va IP bo'yicha rate limit aylanib o'tilardi.
+
+    Uvicorn `--proxy-headers --forwarded-allow-ips=$TRUSTED_PROXY_IPS`
+    bilan ishga tushadi (docker-compose.yml): u header'ni FAQAT ishonchli
+    proxy'dan qabul qiladi va `request.client.host` ni allaqachon to'g'ri
+    qiymatga almashtirgan bo'ladi.
+    """
     if request is None:
         return None
-    forwarded = request.headers.get("X-Forwarded-For")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
     return request.client.host if request.client else None
 
 

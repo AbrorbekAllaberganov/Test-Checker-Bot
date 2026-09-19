@@ -23,6 +23,7 @@ import logging
 from collections import defaultdict
 from pathlib import Path
 from typing import Optional
+from uuid import uuid4
 
 from aiogram import Bot, F, Router
 from aiogram.filters import StateFilter
@@ -39,6 +40,11 @@ log = logging.getLogger(__name__)
 router = Router(name="scan")
 
 # Media group collector: media_group_id → [file_path, ...]
+# DIQQAT: kollektor jarayon XOTIRASIDA. Bot restart bo'lsa yig'ilayotgan
+# albom yo'qoladi (fayllar `temp_dir` da yetim qoladi va kunlik
+# `cleanup_temp_files` ularni o'chiradi). Bu ongli murosa: Redis'ga ko'chirish
+# (LPUSH + EXPIRE) 3 soniyalik oyna uchun ortiqcha murakkablik
+# (weaknesses.md №30).
 _album_collector: dict[str, list[str]] = defaultdict(list)
 _album_tasks: dict[str, asyncio.Task] = {}
 ALBUM_TIMEOUT = 3.0  # sekund — album oxirgi rasm kelgandan kutish
@@ -50,15 +56,33 @@ NOT_REGISTERED_MESSAGE = (
 
 ALLOWED_MIME = {
     "image/jpeg", "image/png", "image/webp",
-    "image/heic", "image/heif", "image/tiff",
+    "image/tiff",
     "application/pdf",
 }
 
+# OpenCV bu formatlarni o'qiy olmaydi — qabul qilinsa skan doim xato berardi
+# (weaknesses.md №30). Foydalanuvchiga nima qilish kerakligi aytiladi.
+HEIC_MIME = {"image/heic", "image/heif"}
+HEIC_MESSAGE = (
+    "📵 iPhone HEIC formati qo'llanmaydi.\n\n"
+    "Ikki yo'ldan birini tanlang:\n"
+    "• Rasmni <b>fayl</b> sifatida emas, oddiy <b>surat</b> qilib yuboring "
+    "(Telegram uni JPEG ga o'giradi);\n"
+    "• yoki iPhone'da <i>Sozlamalar → Kamera → Formatlar → Eng mos (Most "
+    "Compatible)</i> ni yoqing."
+)
+
 
 async def _download_file(bot: Bot, file_id: str, dest_dir: Path, suffix: str) -> str:
-    """Faylni yuklab olib vaqtincha saqlaymiz."""
+    """
+    Faylni yuklab olib vaqtincha saqlaymiz.
+
+    Nom UUID bo'yicha: ilgari `{file_id}{suffix}` edi va bir xil rasm qayta
+    yuborilsa worker AYNI PAYTDA o'qiyotgan fayl ustidan yozilardi
+    (weaknesses.md №30).
+    """
     dest_dir.mkdir(parents=True, exist_ok=True)
-    out = dest_dir / f"{file_id}{suffix}"
+    out = dest_dir / f"{uuid4().hex}{suffix}"
     log.info("Bot: Telegramdan fayl yuklab olinmoqda. File ID: %s, Destination: %s", file_id, out)
     await bot.download(file_id, destination=str(out))
     log.info("Bot: Fayl muvaffaqiyatli yuklab olindi: %s", out)
@@ -107,6 +131,10 @@ async def _enqueue_scan(file_path: str, chat_id: int, user_id: int, db_factory) 
             detected={},
             status="pending",
             source_file=file_path,
+            # Kim yubordi (004): QR o'qilmasa `titul_id` NULL bo'lib qoladi
+            # va bu YAGONA egalik belgisi bo'ladi — busiz aynan xato bergan
+            # skanlar Mini App'da ko'rinmasdi (weaknesses.md №37).
+            submitted_by_id=user_id,
         )
         db.add(pending)
         await db.flush()
@@ -238,6 +266,11 @@ async def handle_document(
         message.chat.id, doc.file_name, doc.mime_type, doc.file_size or 0,
     )
 
+    if doc.mime_type in HEIC_MIME:
+        log.info("Bot: HEIC hujjat rad etildi: chat_id=%d", message.chat.id)
+        await message.answer(HEIC_MESSAGE, parse_mode="HTML")
+        return
+
     if doc.mime_type not in ALLOWED_MIME:
         log.warning("Bot: Noto'g'ri MIME formatdagi hujjat keldi: %s", doc.mime_type)
         await message.answer("Iltimos rasm yoki PDF yuboring.")
@@ -252,9 +285,12 @@ async def handle_document(
         )
         return
 
-    # Kengaytma
-    suffix = Path(doc.file_name or "scan.jpg").suffix or ".jpg"
+    # Kengaytma. `load_image` uni fayl turini aniqlashda ishlatadi, shuning
+    # uchun kutilmagan kengaytmalarni .jpg ga keltiramiz.
+    suffix = Path(doc.file_name or "scan.jpg").suffix.lower() or ".jpg"
     if doc.mime_type == "application/pdf":
         suffix = ".pdf"
+    elif suffix not in {".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff"}:
+        suffix = ".jpg"
 
     await _accept_scan(message, bot, db_user, file_id=doc.file_id, suffix=suffix)

@@ -9,7 +9,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.core.config import get_settings
@@ -53,13 +53,19 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     settings = get_settings()
 
+    # `/docs`, `/redoc` va `/openapi.json` prod'da YOPIQ (weaknesses.md №21):
+    # ular butun ichki API sxemasini — admin endpointlari, maydon nomlari,
+    # validatsiya qoidalarini — anonim ko'rsatib turardi. Dev'da
+    # `.env` da `ENABLE_API_DOCS=true` qiling.
+    docs_enabled = settings.enable_api_docs
     app = FastAPI(
         title="OMR Test Bot API",
         description="O'qituvchilar uchun OMR test bot REST API",
         version="0.1.0",
         lifespan=lifespan,
-        docs_url="/docs",
-        redoc_url="/redoc",
+        docs_url="/docs" if docs_enabled else None,
+        redoc_url="/redoc" if docs_enabled else None,
+        openapi_url="/openapi.json" if docs_enabled else None,
     )
 
     # CORS: Mini App uchun ochiq, lekin admin paneli JWT ishlatgani sababli
@@ -104,8 +110,51 @@ def create_app() -> FastAPI:
     app.include_router(web_api.router)
 
     @app.get("/health")
-    async def health():
-        return {"status": "ok"}
+    async def health(deep: bool = True):
+        """
+        Servis holati.
+
+        `deep=true` (standart) — DB va Redis ham tekshiriladi va nosoz
+        bo'lsa 503 qaytariladi (weaknesses.md №37): ilgari `/health` har
+        doim "ok" derdi, ya'ni baza yotgan konteyner ham "healthy"
+        ko'rinardi va orchestrator uni qayta ishga tushirmasdi.
+        `deep=false` — faqat jarayon tirikligi (liveness).
+        """
+        if not deep:
+            return {"status": "ok"}
+
+        checks: dict[str, str] = {}
+
+        try:
+            from sqlalchemy import text
+
+            from app.core.db import get_session_factory
+
+            async with get_session_factory()() as db:
+                await db.execute(text("SELECT 1"))
+            checks["database"] = "ok"
+        except Exception as exc:
+            log.error("Health: baza javob bermadi: %s", exc)
+            checks["database"] = "error"
+
+        try:
+            import redis.asyncio as aioredis
+
+            client = aioredis.from_url(get_settings().redis_url)
+            try:
+                await client.ping()
+            finally:
+                await client.aclose()
+            checks["redis"] = "ok"
+        except Exception as exc:
+            log.error("Health: Redis javob bermadi: %s", exc)
+            checks["redis"] = "error"
+
+        healthy = all(v == "ok" for v in checks.values())
+        return JSONResponse(
+            status_code=200 if healthy else 503,
+            content={"status": "ok" if healthy else "degraded", "checks": checks},
+        )
 
     @app.get("/login", response_class=HTMLResponse)
     async def login_page(error: str | None = None):

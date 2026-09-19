@@ -22,7 +22,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import aliased, selectinload
 
 from app.api.admin.deps import DbDep, PaginationDep, require_analyst, require_support
 from app.models.attempt import Attempt
@@ -55,6 +55,11 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/scans", tags=["admin:scans"])
 
 LETTERS = "ABCDE"
+
+
+# `User` ikki marta JOIN qilinadi: guruh egasi va skanni yuborgan.
+# Ikkinchisi uchun alias shart, aks holda SQLAlchemy ularni ajrata olmaydi.
+Submitter = aliased(User, name="submitter")
 
 
 def _file_url(attempt_id: int, kind: FileKind, filepath: Optional[str]) -> Optional[str]:
@@ -95,6 +100,10 @@ def _base_scan_query() -> Select:
             Group.name.label("group_name"),
             User.id.label("owner_id"),
             User.full_name.label("owner_name"),
+            # Kim yubordi (004): QR o'qilmagan skanda `owner_*` NULL bo'ladi
+            # va faqat shu ustun kimdan kelganini ko'rsatadi.
+            Submitter.id.label("submitted_by_id"),
+            Submitter.full_name.label("submitted_by_name"),
         )
         .select_from(Attempt)
         .outerjoin(Titul, Titul.id == Attempt.titul_id)
@@ -102,6 +111,7 @@ def _base_scan_query() -> Select:
         .outerjoin(Student, Student.id == Titul.student_id)
         .outerjoin(Group, Group.id == Test.group_id)
         .outerjoin(User, User.id == Group.owner_id)
+        .outerjoin(Submitter, Submitter.id == Attempt.submitted_by_id)
     )
 
 
@@ -167,6 +177,8 @@ def _to_list_item(row) -> ScanListItem:
         group_name=row.group_name,
         owner_id=row.owner_id,
         owner_name=row.owner_name,
+        submitted_by_id=row.submitted_by_id,
+        submitted_by_name=row.submitted_by_name,
     )
 
 

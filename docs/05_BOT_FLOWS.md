@@ -1,10 +1,17 @@
 # 05 — Bot Oqimlari (aiogram 3.x)
 
+> **Yangilangan:** 2026-09-19. Hujjat kod bilan solishtirib tekshirildi
+> (weaknesses.md №36). Hali yozilmagan narsalar "Rejalashtirilgan" bo'limida.
+
 ## Foydalanuvchi turlari
 - **Ustoz**: /start qilgan har kishi (default). Guruh, o'quvchi, test boshqaradi.
-- **Admin**: ADMIN_TELEGRAM_IDS dagi. Hammasini ko'radi (ixtiyoriy).
-- **O'quvchi**: ko'pincha botda hisob ochmaydi — ustoz nomidan qo'shiladi.
-  Lekin xohlasa botga ulanib o'z natijalari tarixini ko'rishi mumkin (kelajak).
+  `AccessMiddleware` uni birinchi xabarda yaratadi/yangilaydi va bloklanganini
+  shu yerda to'xtatadi.
+- **Admin**: ADMIN_TELEGRAM_IDS dagi. Admin PANELIGA kiradi (`/api/admin`);
+  botda alohida admin menyusi YO'Q.
+- **O'quvchi**: botda hisob ochmaydi — ustoz nomidan qo'shiladi.
+  `students.telegram_id` ustuni bor, lekin uni to'ldiradigan oqim
+  hozircha yozilmagan (pastga qarang).
 
 ## Asosiy menyu (ustoz)
 ```
@@ -54,12 +61,17 @@ Guruhni tanlash -> [👥 O'quvchilar] [➕ O'quvchi qo'shish] [📝 Test berish]
 ## Oqim 3 — Titul generatsiya
 ```
 [Ha, hammasi] ->
-   "⏳ N ta titul tayyorlanmoqda..."  (Celery pdf_task har student uchun)
-   tayyor bo'lgach:
-   - har titulni alohida hujjat (PDF) qilib yuborish
-   - yoki bitta ZIP qilib yuborish  (inline: [Alohida] [ZIP])
+   "⏳ N ta titul tayyorlanmoqda..."  (Celery tituls_batch_task — BITTA task)
+   tayyor bo'lgach: barcha PDF'lar bitta ZIP bo'lib keladi
+   (45 MB dan oshsa qismlarga bo'linadi)
+
+[📄 Titullar] -> [Alohida] / [🗜 ZIP]
 ```
-> Katta guruhda ZIP qulay. Alohida — kichik guruhda.
+> **ZIP — standart yo'l.** Ilgari har titul alohida `pdf_task` +
+> `send_document` edi: 150 o'quvchi = 150 ta xabar, Telegram flood limitiga
+> urilib ba'zilari indamay yo'qolardi (weaknesses.md №22).
+> "Alohida" varianti `TITUL_SINGLE_SEND_MAX` (standart 20) tagacha ishlaydi;
+> undan ko'p bo'lsa bot ZIP ni tavsiya qiladi.
 
 ## Oqim 4 — Javoblarni qabul qilish (o'quvchi/ustoz skan yuboradi)
 Bot rasm (photo yoki document image) yoki PDF qabul qiladi. **Caption shart emas**
@@ -77,17 +89,18 @@ Bot natija:
    + (ixtiyoriy) debug rasm
 ```
 ### Bir nechta varaq bittada
-- Foydalanuvchi bir nechta rasm/PDF (yoki ko'p sahifali PDF) yuborsa:
-  - **media group** (album) -> hammasini navbatga qo'yib, har biriga alohida
-    natija + oxirida jamlama.
-  - Ko'p sahifali PDF -> har sahifa alohida varaq sifatida ishlanadi.
-```
-Bot jamlama:
-  "📊 5 ta varaq qayta ishlandi:
-   • Ali V. — 34/40
-   • Vali A. — 30/40
-   • ... (1 ta noaniq ⚠️)"
-```
+- **media group** (album) — hammasi navbatga qo'yiladi, har biriga alohida
+  natija keladi.
+- **Ko'p sahifali PDF** — faqat **1-sahifa** tekshiriladi va natija xabariga
+  ogohlantirish qo'shiladi ("⚠️ Faylda N sahifa bor — faqat 1-sahifa
+  tekshirildi"). Har sahifani alohida urinish qilish — alohida feature;
+  cheklov ataylab: yuzlab sahifali PDF worker'ni OOM qilardi (№14, №23).
+
+### Qabul qilinadigan formatlar
+`image/jpeg`, `image/png`, `image/webp`, `image/tiff`, `application/pdf`.
+**HEIC/HEIF rad etiladi** — OpenCV uni o'qiy olmaydi va skan har doim xato
+berardi. Bot foydalanuvchiga suratni "fayl" emas, oddiy "photo" qilib
+yuborishni yoki iPhone'da "Most Compatible" formatini yoqishni aytadi.
 
 ## Oqim 5 — Natijalar / Tarix
 ```
@@ -108,9 +121,35 @@ O'quvchi tarixi: o'quvchi tanla ->
 | Anchor topilmadi | "Varaq burchaklari ko'rinmayapti. Butun varaqni kadrga oling." |
 | Noto'g'ri fayl turi | "Iltimos rasm yoki PDF yuboring." |
 | Titul DB'da yo'q | "Bu varaq tizimda topilmadi (eski yoki boshqa bot)." |
+| Varaq yon burilgan | "Varaq yon tomonga burilgan. Uni to'g'ri (portret) holatda suratga oling." |
+| Begona titul | "Bu varaq sizning testingizga tegishli emas." |
+| Buzuq/katta fayl | "Varaqni o'qib bo'lmadi. ... qayta yuboring." (retry YO'Q) |
+| Vaqtinchalik nosozlik | "Vaqtinchalik texnik nosozlik. Birozdan keyin qayta yuboring." |
+| HEIC | "iPhone HEIC formati qo'llanmaydi..." |
+| Limit tugadi | "🚫 Limit tugadi" (faqat `ENFORCE_QUOTA=true` bo'lganda) |
+
+> Varaq **180° teskari** tushsa bot buni o'zi aniqlaydi (QR joylashuvi
+> bo'yicha) va to'g'rilab o'qiydi — xato xabar bermaydi (№13).
+
+## Rejalashtirilgan (kodda HOZIRCHA YO'Q)
+
+Bu oqimlar loyiha g'oyasida bor, lekin hali yozilmagan — hujjatni kod bilan
+adashtirmaslik uchun alohida ajratildi:
+
+- **O'quvchining botga ulanishi.** `students.telegram_id` ustuni va
+  `services/students.link_telegram()` mavjud, lekin ularni chaqiradigan
+  handler yo'q. Dashboard'da o'quvchi doim "Ulanmagan".
+- **O'quvchi o'z tarixini ko'rishi.** Yuqoridagisiga bog'liq.
+- **Albom uchun jamlama xabar.** Hozir har varaq uchun alohida natija
+  keladi; "📊 5 ta varaq qayta ishlandi: ..." ko'rinishidagi yakuniy
+  jamlama yo'q.
+- **Botda admin menyusi.** Admin amallari faqat web panelda.
 
 ## Texnik
 - aiogram 3.x, Redis FSM storage.
+- FSM holatlarida `F.text` filtri bor; matn bo'lmagan xabar `fsm_non_text`
+  fallback'iga tushadi (holat tiqilib qolmaydi).
+- Skan handlerlari `StateFilter(None)` bilan — FSM ichidagi rasm skan emas.
 - Fayl yuklash: `bot.download` -> vaqtinchalik papka -> Celery task'ga yo'l beriladi.
 - Uzoq ishlar Celery'da; bot darhol "⏳" yozadi, task tugagach natijani
   `bot.send_message` bilan yuboradi (task ichidan yoki callback orqali).

@@ -6,94 +6,183 @@ pdf_task(titul_id):
   2. QR data URI yaratish
   3. PDF generatsiya → fayl saqlash
   4. DB'da pdf_path yangilash
-  5. Bot orqali natija yuborish
+  5. (ixtiyoriy) Bot orqali yuborish
+
+tituls_batch_task(test_id, chat_id):
+  Barcha titullarni render qilib BITTA ZIP qilib yuboradi — 150 o'quvchi
+  uchun 150 ta alohida xabar Telegram flood limitiga urilardi (№22).
 
 omr_task(file_path, chat_id, attempt_id):
-  1. Rasm/PDF yuklash
-  2. OMR pipeline
-  3. QR → titul UUID → DB dan test/student topish
+  1. Faylni BIR MARTA yuklash (PDF: faqat 1-sahifa)
+  2. QR → titul UUID → DB dan test/student topish (egalik tekshiruvi)
+  3. OMR pipeline (to'g'ri qcount/vcount bilan)
   4. grade() → attempt yozish
   5. Bot orqali natija yuborish
+
+cleanup_temp_files():
+  `temp_dir` dagi yetim (task tugamay qolgan) fayllarni o'chiradi.
+
+Xato siyosati (weaknesses.md №15):
+  • DOIMIY xato (buzuq fayl, topilmagan yozuv, vaqt limiti) → attempt `error`,
+    foydalanuvchiga bitta xabar, RETRY YO'Q.
+  • VAQTINCHALIK xato (DB/Redis/tarmoq) → xabarsiz retry; oxirgi urinishdan
+    keyingina foydalanuvchiga aytiladi.
+  Istisno matni foydalanuvchiga hech qachon yuborilmaydi (ichki ma'lumot).
 """
 from __future__ import annotations
 
-import asyncio
 import logging
+import shutil
+import time
+import uuid as uuid_mod
+import zipfile
 from pathlib import Path
+from typing import Optional
 
-from celery import shared_task
+from celery.exceptions import SoftTimeLimitExceeded
 
 from app.worker.celery_app import celery_app
+from app.worker.session import get_sync_session
 
 log = logging.getLogger(__name__)
 
+# Qayta urinish ma'nosiz bo'lgan xatolar: fayl buzuq, yozuv yo'q, vaqt tugadi.
+PERMANENT_ERRORS = (
+    ValueError,
+    FileNotFoundError,
+    IsADirectoryError,
+    PermissionError,
+    SoftTimeLimitExceeded,
+)
+
+
+def _is_permanent(exc: BaseException) -> bool:
+    """
+    Xato doimiymi (qayta urinishdan foyda yo'q)?
+
+    `cv2.error` ni tur bo'yicha tekshirmaymiz — cv2 ni modul darajasida import
+    qilish bot jarayonini ham sekinlashtiradi (bot `omr_task` ni import qiladi).
+    """
+    if isinstance(exc, PERMANENT_ERRORS):
+        return True
+    return type(exc).__module__.split(".")[0] == "cv2"
+
+GENERIC_PERMANENT_MESSAGE = (
+    "❌ Varaqni o'qib bo'lmadi. Varaqni to'liq, aniq va yaxshi yoritilgan "
+    "holda suratga olib qayta yuboring."
+)
+GENERIC_TRANSIENT_MESSAGE = (
+    "❌ Vaqtinchalik texnik nosozlik. Birozdan keyin qayta yuboring."
+)
+
 
 def _get_sync_session():
-    """Celery task uchun sync SQLAlchemy session."""
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import sessionmaker
-    from app.core.config import get_settings
-
-    settings = get_settings()
-    engine = create_engine(settings.sync_database_url, pool_pre_ping=True)
-    Session = sessionmaker(bind=engine)
-    return Session()
+    """Celery task uchun sync SQLAlchemy session (umumiy engine)."""
+    return get_sync_session()
 
 
-def _send_message_sync(chat_id: int, text: str, **kwargs) -> None:
-    """Bot orqali xabar yuborish (asyncio.run bilan)."""
+# ─── Telegram yuborish (sync o'ram) ──────────────────────────────────────────
+
+def _run_bot(coro_factory):
+    """Bitta Bot sessiyasi ochib coroutine'ni ishga tushiradi."""
     import asyncio
+
     from aiogram import Bot
     from aiogram.client.default import DefaultBotProperties
     from aiogram.enums import ParseMode
+
     from app.core.config import get_settings
 
-    log.info("Worker: Bot orqali xabar yuborilmoqda: chat_id=%d", chat_id)
-    async def _send():
+    async def _wrapper():
         bot = Bot(
             token=get_settings().bot_token,
-            default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+            default=DefaultBotProperties(parse_mode=ParseMode.HTML),
         )
         try:
-            await bot.send_message(chat_id=chat_id, text=text, **kwargs)
-            log.info("Worker: Xabar yuborildi: chat_id=%d", chat_id)
-        except Exception as e:
-            log.error("Worker: Xabar yuborishda xatolik: chat_id=%d, xato=%s", chat_id, e)
+            return await coro_factory(bot)
         finally:
             await bot.session.close()
 
-    asyncio.run(_send())
+    return asyncio.run(_wrapper())
 
 
-def _send_document_sync(chat_id: int, file_path: str, caption: str = "") -> None:
-    """Bot orqali fayl yuborish."""
+async def _send_with_retry(send_coro_factory, *, what: str, chat_id: int) -> bool:
+    """
+    Telegram'ga yuborish + `RetryAfter` ni HURMAT qilish.
+
+    Ilgari 429 faqat log qilinardi va xabar indamay yo'qolardi
+    (weaknesses.md №22).
+
+    Returns:
+        True — yuborildi.
+    """
     import asyncio
-    from aiogram import Bot
-    from aiogram.client.default import DefaultBotProperties
-    from aiogram.enums import ParseMode
+
+    from aiogram.exceptions import (
+        TelegramForbiddenError,
+        TelegramRetryAfter,
+    )
+
+    for attempt in range(2):
+        try:
+            await send_coro_factory()
+            return True
+        except TelegramRetryAfter as exc:
+            if attempt == 0:
+                wait = int(exc.retry_after) + 1
+                log.warning(
+                    "Worker: Telegram flood limiti (%s, chat_id=%d) — %d s kutamiz",
+                    what, chat_id, wait,
+                )
+                await asyncio.sleep(wait)
+                continue
+            log.error("Worker: %s yuborilmadi (flood limiti): chat_id=%d", what, chat_id)
+            return False
+        except TelegramForbiddenError:
+            # Foydalanuvchi botni bloklagan — qayta urinish ma'nosiz.
+            log.warning("Worker: bot bloklangan, %s yuborilmadi: chat_id=%d", what, chat_id)
+            return False
+        except Exception as exc:
+            log.error("Worker: %s yuborishda xatolik: chat_id=%d, xato=%s", what, chat_id, exc)
+            return False
+    return False
+
+
+def _send_message_sync(chat_id: int, text: str, **kwargs) -> bool:
+    """Bot orqali xabar yuborish."""
+    log.info("Worker: Bot orqali xabar yuborilmoqda: chat_id=%d", chat_id)
+
+    async def _send(bot):
+        return await _send_with_retry(
+            lambda: bot.send_message(chat_id=chat_id, text=text, **kwargs),
+            what="xabar",
+            chat_id=chat_id,
+        )
+
+    return bool(_run_bot(_send))
+
+
+def _send_document_sync(chat_id: int, file_path: str, caption: str = "") -> bool:
+    """Bot orqali fayl yuborish."""
     from aiogram.types import FSInputFile
-    from app.core.config import get_settings
 
     log.info("Worker: Bot orqali fayl yuborilmoqda: chat_id=%d, file=%s", chat_id, file_path)
-    async def _send():
-        bot = Bot(
-            token=get_settings().bot_token,
-            default=DefaultBotProperties(parse_mode=ParseMode.HTML)
-        )
-        try:
-            await bot.send_document(
+
+    async def _send(bot):
+        return await _send_with_retry(
+            lambda: bot.send_document(
                 chat_id=chat_id,
                 document=FSInputFile(file_path),
                 caption=caption,
-            )
-            log.info("Worker: Fayl yuborildi: chat_id=%d", chat_id)
-        except Exception as e:
-            log.error("Worker: Fayl yuborishda xatolik: chat_id=%d, xato=%s", chat_id, e)
-        finally:
-            await bot.session.close()
+            ),
+            what="fayl",
+            chat_id=chat_id,
+        )
 
-    asyncio.run(_send())
+    return bool(_run_bot(_send))
 
+
+# ─── Egalik ──────────────────────────────────────────────────────────────────
 
 def _chat_owns_test(db, test_id: int, chat_id: int) -> bool:
     """
@@ -135,6 +224,64 @@ def _reject_foreign_titul(db, attempt, chat_id: int) -> None:
     )
 
 
+def _mark_error(db, attempt_id: int, message: str) -> None:
+    """Attempt'ni `error` holatiga o'tkazadi (ichki xato matni bilan)."""
+    from app.models.attempt import Attempt
+
+    try:
+        db.rollback()
+        attempt = db.get(Attempt, attempt_id)
+        if attempt is not None:
+            attempt.status = "error"
+            attempt.error_msg = message[:500]
+            db.commit()
+    except Exception:
+        log.exception("Worker: attempt'ni error holatiga o'tkazib bo'lmadi: %d", attempt_id)
+
+
+# ─── PDF ─────────────────────────────────────────────────────────────────────
+
+def _render_titul(db, settings, titul) -> Path:
+    """Bitta titul uchun PDF render qiladi (mavjud bo'lsa qayta ishlatadi)."""
+    from app.models.group import Group
+    from app.models.student import Student
+    from app.models.test import Test
+    from app.pdf.qrgen import make_qr_data_uri
+    from app.pdf.render import render_titul_pdf
+
+    if titul.pdf_path:
+        existing = Path(titul.pdf_path)
+        if existing.exists():
+            return existing
+
+    test = db.get(Test, titul.test_id)
+    if test is None:
+        raise ValueError(f"Test topilmadi: titul_id={titul.id}")
+    group = db.get(Group, test.group_id)
+    student = db.get(Student, titul.student_id)
+    if group is None or student is None:
+        raise ValueError(f"Guruh yoki o'quvchi topilmadi: titul_id={titul.id}")
+
+    # PDF fayl yo'li. Nomda UUID — ketma-ket ID emas: ilgari
+    # `titul_{id}_{student_id}.pdf` bo'lib, /static orqali barcha titullarni
+    # enumeratsiya qilish mumkin edi (weaknesses.md №4).
+    out_path = settings.pdf_output_dir / f"titul_{titul.uuid}.pdf"
+    render_titul_pdf(
+        titul_uuid=str(titul.uuid),
+        test_title=test.title,
+        group_name=group.name,
+        student_name=student.full_name,
+        question_count=test.question_count,
+        variant_count=test.variant_count,
+        qr_data_uri=make_qr_data_uri(str(titul.uuid)),
+        out_path=out_path,
+        bot_username=settings.bot_username,
+    )
+    titul.pdf_path = str(out_path)
+    db.commit()
+    return out_path
+
+
 @celery_app.task(bind=True, name="pdf_task", max_retries=3)
 def pdf_task(self, titul_id: int, notify_chat_id: int | None = None):
     """
@@ -142,82 +289,234 @@ def pdf_task(self, titul_id: int, notify_chat_id: int | None = None):
 
     Args:
         titul_id:       Titul DB ID.
-        notify_chat_id: Tayyor bo'lgach xabar yuborish (ixtiyoriy).
+        notify_chat_id: Tayyor bo'lgach yuborish (yakka regeneratsiya uchun).
     """
     from app.core.config import get_settings
-    from app.pdf.qrgen import make_qr_data_uri
-    from app.pdf.render import render_titul_pdf
+    from app.models.student import Student
+    from app.models.test import Test
+    from app.models.titul import Titul
+    from app.services.telegram import escape
 
     log.info("Worker: pdf_task boshlandi: titul_id=%d, notify_chat_id=%s", titul_id, notify_chat_id)
     settings = get_settings()
     db = _get_sync_session()
 
     try:
-        # DB dan ma'lumot olish (sync ORM)
-        from app.models.titul import Titul
-        from app.models.test import Test
-        from app.models.group import Group
-        from app.models.student import Student
-
         titul = db.get(Titul, titul_id)
         if titul is None:
+            # Titul o'chirilgan — qayta urinish ma'nosiz (weaknesses.md №15).
             log.error("Worker: Titul topilmadi: %d", titul_id)
             return
 
-        test = db.get(Test, titul.test_id)
-        group = db.get(Group, test.group_id)
-        student = db.get(Student, titul.student_id)
+        out_path = _render_titul(db, settings, titul)
+        log.info("Worker: PDF tayyor: %s", out_path)
 
-        log.info("Worker: Ma'lumotlar o'qildi: student=%s, test=%s", student.full_name, test.title)
-
-        # QR data URI
-        qr_uri = make_qr_data_uri(str(titul.uuid))
-        log.info("Worker: QR data URI yaratildi.")
-
-        # PDF fayl yo'li. Nomda UUID — ketma-ket ID emas: ilgari
-        # `titul_{id}_{student_id}.pdf` bo'lib, /static orqali barcha
-        # titullarni enumeratsiya qilish mumkin edi (weaknesses.md №4).
-        # /static mount olib tashlangan, lekin nom ham taxmin qilinmasin.
-        out_path = settings.pdf_output_dir / f"titul_{titul.uuid}.pdf"
-        log.info("Worker: PDF yo'li belgilandi: %s", out_path)
-
-        # PDF render
-        log.info("Worker: WeasyPrint orqali PDF render boshlanmoqda...")
-        render_titul_pdf(
-            titul_uuid=str(titul.uuid),
-            test_title=test.title,
-            group_name=group.name,
-            student_name=student.full_name,
-            question_count=test.question_count,
-            variant_count=test.variant_count,
-            qr_data_uri=qr_uri,
-            out_path=out_path,
-            bot_username=settings.bot_username,
-        )
-        log.info("Worker: PDF render muvaffaqiyatli yakunlandi.")
-
-        # DB yangilash
-        titul.pdf_path = str(out_path)
-        db.commit()
-        log.info("Worker: DB'da pdf_path yangilandi: %s", out_path)
-
-        # Xabar yuborish
         if notify_chat_id:
-            log.info("Worker: Bot orqali titul yuborilmoqda, chat_id=%d", notify_chat_id)
-            from app.services.telegram import escape
+            test = db.get(Test, titul.test_id)
+            student = db.get(Student, titul.student_id)
+            caption = "📄 Titul"
+            if student is not None and test is not None:
+                caption = f"📄 {escape(student.full_name)} — {escape(test.title)}"
+            _send_document_sync(notify_chat_id, str(out_path), caption=caption)
 
+    except Exception as exc:
+        db.rollback()
+        if _is_permanent(exc):
+            log.error("Worker: pdf_task doimiy xatosi (titul_id=%d): %s", titul_id, exc)
+            if notify_chat_id:
+                _send_message_sync(notify_chat_id, "❌ Titul PDF yaratilmadi.")
+            return
+        log.exception("Worker: pdf_task xatosi (titul_id=%d): %s", titul_id, exc)
+        if self.request.retries >= self.max_retries:
+            if notify_chat_id:
+                _send_message_sync(notify_chat_id, GENERIC_TRANSIENT_MESSAGE)
+            return
+        raise self.retry(exc=exc, countdown=30 * (self.request.retries + 1))
+    finally:
+        db.close()
+
+
+@celery_app.task(bind=True, name="tituls_batch_task", max_retries=1)
+def tituls_batch_task(self, test_id: int, chat_id: int, owner_id: int | None = None):
+    """
+    Test uchun BARCHA titullarni render qilib ZIP qilib yuboradi.
+
+    Ilgari har titul alohida `pdf_task` + `send_document` edi — 150 o'quvchi
+    150 ta xabar, 429 esa faqat log qilinardi va PDF'lar indamay yo'qolardi
+    (weaknesses.md №22).
+
+    Args:
+        test_id:  Test DB ID.
+        chat_id:  Natija yuboriladigan chat.
+        owner_id: Egalik tekshiruvi uchun (None = tekshirilmaydi, ichki chaqiruv).
+    """
+    from sqlalchemy import select as sa_select
+
+    from app.core.config import get_settings
+    from app.models.test import Test
+    from app.models.titul import Titul
+    from app.services.telegram import escape
+
+    log.info("Worker: tituls_batch_task boshlandi: test_id=%d chat_id=%d", test_id, chat_id)
+    settings = get_settings()
+    db = _get_sync_session()
+    zip_paths: list[Path] = []
+
+    try:
+        test = db.get(Test, test_id)
+        if test is None:
+            _send_message_sync(chat_id, "❌ Test topilmadi.")
+            return
+        if not _chat_owns_test(db, test_id, chat_id):
+            log.warning("Worker: tituls_batch_task begona test: test_id=%d chat_id=%d", test_id, chat_id)
+            _send_message_sync(chat_id, "❌ Bu test sizga tegishli emas.")
+            return
+
+        tituls = list(
+            db.execute(sa_select(Titul).where(Titul.test_id == test_id).order_by(Titul.id))
+            .scalars()
+            .all()
+        )
+        if not tituls:
+            _send_message_sync(chat_id, "Bu test uchun titul yo'q.")
+            return
+
+        # 1. Render (mavjudlari qayta ishlatiladi)
+        pdf_paths: list[Path] = []
+        failed = 0
+        for titul in tituls:
+            try:
+                pdf_paths.append(_render_titul(db, settings, titul))
+            except Exception as exc:
+                failed += 1
+                log.error("Worker: titul render xatosi (id=%d): %s", titul.id, exc)
+
+        if not pdf_paths:
+            _send_message_sync(chat_id, "❌ Titullarni tayyorlab bo'lmadi.")
+            return
+
+        # 2. ZIP — diskda, oqimli (xotirada 50 MB ushlab turmaymiz)
+        max_bytes = settings.telegram_zip_max_mb * 1024 * 1024
+        zip_paths = _write_zip_parts(
+            pdf_paths,
+            out_dir=settings.pdf_output_dir,
+            stem=f"titullar_test{test_id}_{uuid_mod.uuid4().hex[:8]}",
+            max_bytes=max_bytes,
+        )
+
+        # 3. Yuborish
+        total = len(zip_paths)
+        for idx, zp in enumerate(zip_paths, start=1):
+            suffix = f" ({idx}/{total})" if total > 1 else ""
             _send_document_sync(
-                notify_chat_id,
-                str(out_path),
-                caption=f"📄 {escape(student.full_name)} — {escape(test.title)}",
+                chat_id,
+                str(zp),
+                caption=f"📦 {escape(test.title)} — {len(pdf_paths)} ta titul{suffix}",
+            )
+
+        if failed:
+            _send_message_sync(
+                chat_id, f"⚠️ {failed} ta titul tayyorlanmadi (xatolik)."
             )
 
     except Exception as exc:
         db.rollback()
-        log.exception("Worker: pdf_task xatosi (titul_id=%d): %s", titul_id, exc)
-        raise self.retry(exc=exc, countdown=30)
+        if _is_permanent(exc):
+            log.error("Worker: tituls_batch_task doimiy xatosi (test_id=%d): %s", test_id, exc)
+            _send_message_sync(chat_id, "❌ Titullarni tayyorlab bo'lmadi.")
+            return
+        log.exception("Worker: tituls_batch_task xatosi (test_id=%d): %s", test_id, exc)
+        if self.request.retries >= self.max_retries:
+            _send_message_sync(chat_id, GENERIC_TRANSIENT_MESSAGE)
+            return
+        raise self.retry(exc=exc, countdown=60)
     finally:
+        # ZIP faqat yuborish uchun kerak edi — diskda qoldirmaymiz.
+        for zp in zip_paths:
+            try:
+                zp.unlink(missing_ok=True)
+            except OSError:
+                pass
         db.close()
+
+
+def _write_zip_parts(
+    files: list[Path],
+    *,
+    out_dir: Path,
+    stem: str,
+    max_bytes: int,
+) -> list[Path]:
+    """
+    Fayllarni ZIP(lar)ga yozadi; har bo'lak `max_bytes` dan oshmaydi.
+
+    Returns:
+        Yaratilgan ZIP fayllar ro'yxati.
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    parts: list[Path] = []
+    part_idx = 0
+    zf: Optional[zipfile.ZipFile] = None
+    path: Optional[Path] = None
+
+    def _open_part() -> tuple[Path, zipfile.ZipFile]:
+        nonlocal part_idx
+        part_idx += 1
+        p = out_dir / f"{stem}_{part_idx}.zip"
+        return p, zipfile.ZipFile(p, "w", zipfile.ZIP_DEFLATED)
+
+    try:
+        for fp in files:
+            if zf is None:
+                path, zf = _open_part()
+                parts.append(path)
+
+            zf.write(fp, fp.name)
+
+            # Hajmni faqat FAYL chegarasida tekshiramiz — ZIP o'rtasidan
+            # bo'linmasin. `zf.fp.tell()` yozilgan bayt soni (flush shart emas).
+            written = zf.fp.tell() if zf.fp is not None else 0
+            if written >= max_bytes:
+                zf.close()
+                zf = None
+    finally:
+        if zf is not None:
+            zf.close()
+
+    return parts
+
+
+# ─── OMR ─────────────────────────────────────────────────────────────────────
+
+def _archive_source(file_path: str, settings) -> str:
+    """
+    Skan faylini `temp_dir` dan doimiy `uploads_dir` ga ko'chiradi.
+
+    Review (`/api/web/attempts/{id}/file/source`) shu faylga bog'liq, `temp_dir`
+    esa kunlik tozalanadi (weaknesses.md №30).
+
+    Returns:
+        Yangi yo'l (ko'chirib bo'lmasa — eskisi).
+    """
+    src = Path(file_path)
+    if not src.exists():
+        return file_path
+    try:
+        if src.parent.resolve() == settings.uploads_dir.resolve():
+            return file_path
+    except OSError:
+        pass
+
+    try:
+        settings.uploads_dir.mkdir(parents=True, exist_ok=True)
+        dst = settings.uploads_dir / src.name
+        if dst.exists():
+            dst = settings.uploads_dir / f"{uuid_mod.uuid4().hex}{src.suffix}"
+        shutil.move(str(src), str(dst))
+        return str(dst)
+    except OSError as exc:
+        log.warning("Worker: skan faylini ko'chirib bo'lmadi (%s): %s", src, exc)
+        return file_path
 
 
 @celery_app.task(bind=True, name="omr_task", max_retries=2)
@@ -225,24 +524,29 @@ def omr_task(self, file_path: str, chat_id: int, attempt_id: int):
     """
     OMR pipeline + baholash + DB yozish + natija yuborish.
 
-    Ikki bosqichli yondashuv:
-      1. Faqat QR o'qib titul UUID olish.
-      2. DB'dan haqiqiy qcount/vcount olib, to'liq pipeline'ni ishlatish.
+    Fayl BIR MARTA yuklanadi (PDF: faqat birinchi sahifa) va ikkala bosqichga
+    (QR pre-scan, to'liq pipeline) bir xil kadr beriladi (weaknesses.md №14).
 
     Args:
         file_path:  Yuklab olingan rasm/PDF yo'li.
         chat_id:    Natija yuboriladigan Telegram chat ID.
         attempt_id: Pending attempt DB ID.
     """
-    from app.core.config import get_settings
-    from app.omr.pipeline import run, read_qr_from_file
-    from app.services.grading import grade, format_result_message
-    from app.models.attempt import Attempt
-    from app.models.titul import Titul
-    from app.models.test import Test
-    from app.models.student import Student
+    from sqlalchemy import select as sa_select
 
-    log.info("Worker: omr_task boshlandi: file_path=%s, attempt_id=%d, chat_id=%d", file_path, attempt_id, chat_id)
+    from app.core.config import get_settings
+    from app.models.attempt import Attempt
+    from app.models.student import Student
+    from app.models.test import Test
+    from app.models.titul import Titul
+    from app.omr.pipeline import load_pages, run
+    from app.omr.qr import read_qr
+    from app.services.grading import format_result_message, grade
+
+    log.info(
+        "Worker: omr_task boshlandi: file_path=%s, attempt_id=%d, chat_id=%d",
+        file_path, attempt_id, chat_id,
+    )
     settings = get_settings()
     db = _get_sync_session()
 
@@ -255,19 +559,34 @@ def omr_task(self, file_path: str, chat_id: int, attempt_id: int):
         attempt.status = "pending"
         db.commit()
 
-        # ── 1-bosqich: Faqat QR o'qib titul UUID olish ──────────────────────────
-        log.info("Worker: QR pre-scan boshlandi. File: %s", file_path)
-        pre_uuid = read_qr_from_file(file_path)
+        # ── 0-bosqich: faylni bir marta yuklash ────────────────────────────
+        images, total_pages = load_pages(
+            file_path, dpi=settings.omr_dpi, max_pages=settings.omr_max_pages
+        )
+        if not images:
+            raise ValueError("Fayldan hech qanday sahifa o'qilmadi")
 
-        qcount: int | None = None
+        page_note = ""
+        if total_pages > len(images):
+            page_note = (
+                f"\n\n⚠️ Faylda {total_pages} sahifa bor — faqat 1-sahifa tekshirildi."
+            )
+            log.warning(
+                "Worker: ko'p sahifali fayl (%d sahifa), faqat %d tekshirildi",
+                total_pages, len(images),
+            )
+
+        # ── 1-bosqich: QR pre-scan (DB'dan qcount/vcount olish) ────────────
+        pre_uuid = read_qr(images[0])
+        qcount: Optional[int] = None
         vcount: int = 4
 
         if pre_uuid is not None:
-            # Titul va test ma'lumotini olish
-            from sqlalchemy import select as sa_select
-            import uuid as _uuid_mod
             try:
-                uuid_obj = _uuid_mod.UUID(pre_uuid)
+                uuid_obj = uuid_mod.UUID(pre_uuid)
+            except ValueError:
+                log.warning("Worker: QR ichidagi UUID noto'g'ri: %s", pre_uuid)
+            else:
                 pre_titul = db.execute(
                     sa_select(Titul).where(Titul.uuid == uuid_obj)
                 ).scalar_one_or_none()
@@ -284,30 +603,25 @@ def omr_task(self, file_path: str, chat_id: int, attempt_id: int):
                         qcount = pre_test.question_count
                         vcount = pre_test.variant_count
                         log.info(
-                            "Worker: QR pre-scan muvaffaqiyatli: uuid=%s, qcount=%d, vcount=%d",
+                            "Worker: QR pre-scan: uuid=%s, qcount=%d, vcount=%d",
                             pre_uuid, qcount, vcount,
                         )
                     else:
                         log.warning("Worker: Pre-scan: test topilmadi (titul_id=%d)", pre_titul.id)
                 else:
                     log.warning("Worker: Pre-scan: titul DB'da topilmadi (uuid=%s)", pre_uuid)
-            except (ValueError, Exception) as e:
-                log.warning("Worker: Pre-scan DB xatosi: %s — default qcount ishlatiladi", e)
         else:
-            log.warning("Worker: Pre-scan: QR topilmadi — to'liq pipeline xato qaytaradi")
+            log.warning("Worker: Pre-scan: QR topilmadi")
 
         if qcount is None:
             log.warning("Worker: qcount aniqlanmadi, default=40 qabul qilindi")
             qcount = 40
 
-        # ── 2-bosqich: To'liq OMR pipeline (to'g'ri qcount/vcount bilan) ────────
+        # ── 2-bosqich: To'liq OMR pipeline (bir xil kadrlar ustida) ────────
         debug_dir = settings.debug_output_dir if settings.omr_debug else None
-        log.info(
-            "Worker: OMR pipeline ishga tushirilmoqda. File: %s, qcount=%d, vcount=%d",
-            file_path, qcount, vcount,
-        )
         results = run(
             file_path,
+            images=images,
             fill_min=settings.fill_min,
             fill_margin=settings.fill_margin,
             warp_w=settings.warp_w,
@@ -319,28 +633,25 @@ def omr_task(self, file_path: str, chat_id: int, attempt_id: int):
             debug_out_dir=Path(debug_dir) if debug_dir else None,
         )
 
-        log.info("Worker: OMR pipeline yakunlandi. Natija soni: %d", len(results) if results else 0)
         if not results:
             raise ValueError("Pipeline hech natija qaytarmadi")
 
-        # Birinchi (yoki yagona) sahifani olish
         res = results[0]
 
         if res.error:
             attempt.status = "error"
             attempt.error_msg = res.error
             attempt.detected = {}
+            attempt.source_file = _archive_source(file_path, settings)
             db.commit()
-            _send_message_sync(
-                chat_id,
-                _error_message(res.error),
-            )
+            _send_message_sync(chat_id, _error_message(res.error))
             return
 
         if res.titul_uuid is None:
             attempt.status = "error"
             attempt.error_msg = "QR not found"
             attempt.detected = {}
+            attempt.source_file = _archive_source(file_path, settings)
             db.commit()
             _send_message_sync(
                 chat_id,
@@ -348,12 +659,8 @@ def omr_task(self, file_path: str, chat_id: int, attempt_id: int):
             )
             return
 
-        # Titul topish
-        from sqlalchemy import select as sa_select
-
-        import uuid as _uuid_mod
         try:
-            uuid_obj = _uuid_mod.UUID(res.titul_uuid)
+            uuid_obj = uuid_mod.UUID(res.titul_uuid)
         except ValueError:
             raise ValueError(f"Noto'g'ri UUID: {res.titul_uuid}")
 
@@ -365,6 +672,7 @@ def omr_task(self, file_path: str, chat_id: int, attempt_id: int):
             attempt.status = "error"
             attempt.error_msg = "Titul DB'da topilmadi"
             attempt.detected = res.detected
+            attempt.source_file = _archive_source(file_path, settings)
             db.commit()
             _send_message_sync(
                 chat_id,
@@ -384,7 +692,6 @@ def omr_task(self, file_path: str, chat_id: int, attempt_id: int):
         # Baholash
         gr = grade(res.detected, test.answer_key, res.bubble_data)
 
-        # Attempt yangilash
         attempt.titul_id = titul.id
         attempt.detected = {k: v for k, v in res.detected.items()}
         attempt.score = gr.score
@@ -393,7 +700,7 @@ def omr_task(self, file_path: str, chat_id: int, attempt_id: int):
         attempt.detail = gr.detail
         attempt.needs_review = gr.needs_review or res.needs_review
         attempt.status = "done"
-        attempt.source_file = file_path
+        attempt.source_file = _archive_source(file_path, settings)
 
         # Admin inspektori uchun: doira o'lchovlarini va o'rtacha ishonchlilikni
         # saqlaymiz (003 migratsiyasi). Busiz panelda faqat yakuniy javob
@@ -409,26 +716,21 @@ def omr_task(self, file_path: str, chat_id: int, attempt_id: int):
                 attempt.confidence = round(sum(confidences) / len(confidences), 4)
 
         # Debug rasm
-        if settings.omr_debug:
+        if settings.omr_debug and debug_dir:
             debug_files = list(
                 Path(debug_dir).glob(f"{Path(file_path).stem}*_debug.jpg")
-            ) if debug_dir else []
+            )
             if debug_files:
                 attempt.debug_file = str(debug_files[0])
 
         db.commit()
 
         # Natija xabari
-        msg = format_result_message(gr, test.title, student.full_name)
+        msg = format_result_message(gr, test.title, student.full_name) + page_note
         _send_message_sync(chat_id, msg)
 
-        # Debug rasm ham yuborish (agar mavjud)
         if settings.omr_debug and attempt.debug_file:
-            _send_document_sync(
-                chat_id,
-                attempt.debug_file,
-                caption="🔍 Debug annotatsiya",
-            )
+            _send_document_sync(chat_id, attempt.debug_file, caption="🔍 Debug annotatsiya")
 
         log.info(
             "OMR tayyor: student=%s score=%d/%d (%.1f%%)",
@@ -437,23 +739,22 @@ def omr_task(self, file_path: str, chat_id: int, attempt_id: int):
 
     except Exception as exc:
         db.rollback()
+        if _is_permanent(exc):
+            # Buzuq/juda katta fayl, o'chirilgan yozuv, vaqt limiti — retry'dan
+            # foyda yo'q, uchala urinishda bir xil xabar ketardi (№15).
+            log.error("Worker: omr_task doimiy xatosi (attempt_id=%d): %s", attempt_id, exc)
+            _mark_error(db, attempt_id, str(exc))
+            _send_message_sync(chat_id, GENERIC_PERMANENT_MESSAGE)
+            return
+
+        # DB/Redis/tarmoq — vaqtinchalik. Foydalanuvchini har urinishda
+        # bezovta qilmaymiz, faqat oxirgisida.
         log.exception("omr_task xatosi (attempt_id=%d): %s", attempt_id, exc)
-
-        # Attempt'ni error holatiga o'tkazish
-        try:
-            attempt = db.get(Attempt, attempt_id)
-            if attempt:
-                attempt.status = "error"
-                attempt.error_msg = str(exc)
-                db.commit()
-        except Exception:
-            pass
-
-        _send_message_sync(
-            chat_id,
-            "❌ Xatolik yuz berdi. Iltimos qayta urinib ko'ring.",
-        )
-        raise self.retry(exc=exc, countdown=60)
+        if self.request.retries >= self.max_retries:
+            _mark_error(db, attempt_id, str(exc))
+            _send_message_sync(chat_id, GENERIC_TRANSIENT_MESSAGE)
+            return
+        raise self.retry(exc=exc, countdown=60 * (self.request.retries + 1))
     finally:
         db.close()
 
@@ -465,6 +766,48 @@ def _error_message(error_code: str) -> str:
     messages = {
         "QR not found": "Varaqdagi QR kod o'qilmadi. To'liq, aniq suratga oling.",
         "Anchor topilmadi": "Varaq burchaklari ko'rinmayapti. Butun varaqni kadrga oling.",
+        "Varaq yon tomonga burilgan": (
+            "Varaq yon tomonga burilgan. Uni to'g'ri (portret) holatda suratga oling."
+        ),
     }
     # Noma'lum kod — pipeline'dan kelgan erkin matn, ichida `<` bo'lishi mumkin.
     return messages.get(error_code, f"❌ Xatolik: {escape(error_code)}")
+
+
+# ─── Tozalash ────────────────────────────────────────────────────────────────
+
+@celery_app.task(name="cleanup_temp_files")
+def cleanup_temp_files(max_age_hours: int | None = None) -> int:
+    """
+    `temp_dir` dagi eski (yetim) fayllarni o'chiradi.
+
+    Baholangan skanlar `uploads_dir` ga ko'chiriladi, `temp_dir` da esa faqat
+    task boshlanmagan yoki yiqilgan fayllar qoladi — ular cheksiz to'planardi
+    (weaknesses.md №30).
+
+    Returns:
+        O'chirilgan fayllar soni.
+    """
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    hours = max_age_hours if max_age_hours is not None else settings.temp_file_max_age_hours
+    cutoff = time.time() - hours * 3600
+    removed = 0
+
+    temp_dir = Path(settings.temp_dir)
+    if not temp_dir.exists():
+        return 0
+
+    for fp in temp_dir.iterdir():
+        if not fp.is_file():
+            continue
+        try:
+            if fp.stat().st_mtime < cutoff:
+                fp.unlink()
+                removed += 1
+        except OSError as exc:
+            log.warning("Worker: %s o'chirilmadi: %s", fp, exc)
+
+    log.info("Worker: cleanup_temp_files — %d fayl o'chirildi (>%d soat)", removed, hours)
+    return removed

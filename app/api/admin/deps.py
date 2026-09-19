@@ -30,6 +30,7 @@ from app.core.db import get_db
 from app.core.security import InsecureSecretError, TokenError, decode_token
 from app.models.enums import AdminRole
 from app.models.user import User
+from app.services import token_store
 
 log = logging.getLogger(__name__)
 
@@ -79,6 +80,21 @@ async def get_current_admin(
             detail=str(exc),
             headers={"WWW-Authenticate": "Bearer"},
         ) from exc
+
+    # Bekor qilingan token (logout yoki o'g'irlangan sessiya) — T-30.
+    redis = token_store.redis_client()
+    try:
+        revoked = await token_store.is_revoked(
+            redis, jti=payload.jti, family=payload.family
+        )
+    finally:
+        await redis.aclose()
+    if revoked:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Sessiya yakunlangan — qaytadan kiring",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     user = (
         await db.execute(select(User).where(User.id == payload.user_id))

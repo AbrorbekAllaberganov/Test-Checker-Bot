@@ -18,17 +18,18 @@ Egalik zanjiri:
     Titul    → Titul.test_id → Test → Group.owner_id
     Attempt  → Attempt.titul_id → Titul → Test → Group.owner_id
 
-`Attempt.titul_id` NULL bo'lishi mumkin (QR hali o'qilmagan pending skan).
-Bunday skan hech kimga "tegishli" emas — `owned_attempt` uni qaytarmaydi.
-Mini App ro'yxatlari ham ularni ko'rsatmaydi (INNER JOIN Titul), shu
-sababli foydalanuvchi ularga havola ham olmaydi.
+`Attempt.titul_id` NULL bo'lishi mumkin (QR hali o'qilmagan pending yoki
+error skan). Bunday skanda zanjir uzilgan, shu sababli egalik IKKINCHI
+belgiga tayanadi: `Attempt.submitted_by_id` (004 migratsiyasi) — skanni
+kim yuborgani. Shunda aynan eng muammoli skanlar (QR o'qilmagan) ham
+o'z ustoziga ko'rinadi (weaknesses.md №37).
 """
 from __future__ import annotations
 
 from collections.abc import Sequence
 from typing import Optional
 
-from sqlalchemy import Select, select
+from sqlalchemy import Select, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.base import ExecutableOption
@@ -112,18 +113,31 @@ async def owned_attempt(
     owner_id: int,
 ) -> Optional[Attempt]:
     """
-    Urinishni faqat test egasi uchun qaytaradi.
+    Urinishni faqat egasiga qaytaradi.
+
+    Egalik ikki yo'l bilan tasdiqlanadi:
+      1. Zanjir: Attempt → Titul → Test → Group.owner_id (QR o'qilgan skan).
+      2. `submitted_by_id` — skanni kim yuborgani (QR o'qilmagan skan;
+         zanjir uzilgan bo'lsa yagona belgi).
+
+    OUTER JOIN shart: INNER bo'lsa `titul_id IS NULL` skanlar butunlay
+    tushib qolardi (CLAUDE.md, weaknesses.md №37).
 
     `titul`, `titul.student`, `titul.test`, `titul.test.group` yuklangan —
     chaqiruvchi relationship'larga tegishi mumkin (async'da lazy-load yo'q).
-    `titul_id` NULL bo'lgan pending skanlar hech kimga qaytarilmaydi.
     """
     stmt = (
         select(Attempt)
-        .join(Titul, Titul.id == Attempt.titul_id)
-        .join(Test, Test.id == Titul.test_id)
-        .join(Group, Group.id == Test.group_id)
-        .where(Attempt.id == attempt_id, Group.owner_id == owner_id)
+        .outerjoin(Titul, Titul.id == Attempt.titul_id)
+        .outerjoin(Test, Test.id == Titul.test_id)
+        .outerjoin(Group, Group.id == Test.group_id)
+        .where(
+            Attempt.id == attempt_id,
+            or_(
+                Group.owner_id == owner_id,
+                Attempt.submitted_by_id == owner_id,
+            ),
+        )
         .options(
             selectinload(Attempt.titul).selectinload(Titul.student),
             selectinload(Attempt.titul)
@@ -147,16 +161,30 @@ def owner_filter_for_students(stmt: Select, owner_id: int) -> Select:
     return stmt.join(Group, Group.id == Student.group_id).where(Group.owner_id == owner_id)
 
 
-def owner_filter_for_attempts(stmt: Select, owner_id: int) -> Select:
+def owner_filter_for_attempts(
+    stmt: Select, owner_id: int, *, include_pending: bool = True
+) -> Select:
     """
-    `select(...).select_from(Attempt)` so'roviga to'liq zanjir bo'yicha filtr.
+    `select(...).select_from(Attempt)` so'roviga egalik bo'yicha filtr.
 
-    INNER JOIN — `titul_id` NULL skanlar chiqib ketadi; bu ataylab: ular
-    hali hech kimga tegishli emas.
+    OUTER JOIN + `submitted_by_id`: `titul_id` NULL skanlar (QR o'qilmagan)
+    ham egasiga ko'rinadi. Ilgari INNER JOIN edi va aynan eng muammoli
+    skanlar ro'yxatdan tushib qolardi (weaknesses.md №37).
+
+    Args:
+        include_pending: False bo'lsa faqat titulga bog'langan (baholangan)
+            skanlar — statistika/o'rtacha ball hisoblari uchun.
     """
-    return (
-        stmt.join(Titul, Titul.id == Attempt.titul_id)
-        .join(Test, Test.id == Titul.test_id)
-        .join(Group, Group.id == Test.group_id)
-        .where(Group.owner_id == owner_id)
+    stmt = (
+        stmt.outerjoin(Titul, Titul.id == Attempt.titul_id)
+        .outerjoin(Test, Test.id == Titul.test_id)
+        .outerjoin(Group, Group.id == Test.group_id)
     )
+    if include_pending:
+        return stmt.where(
+            or_(
+                Group.owner_id == owner_id,
+                Attempt.submitted_by_id == owner_id,
+            )
+        )
+    return stmt.where(Group.owner_id == owner_id)

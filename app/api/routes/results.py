@@ -8,6 +8,7 @@ from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import verify_internal_key
+from app.core.time import to_local
 from app.core.db import get_db
 from app.services import history as history_svc
 
@@ -69,7 +70,7 @@ async def student_history(student_id: int, db: AsyncSession = Depends(get_db)):
             "total": h.total,
             "percent": h.percent,
             "needs_review": h.needs_review,
-            "date": h.created_at.strftime("%d.%m.%Y %H:%M"),
+            "date": to_local(h.created_at).strftime("%d.%m.%Y %H:%M"),
         }
         for h in history
     ]

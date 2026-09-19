@@ -83,22 +83,25 @@ class QuotaSnapshot:
 # ── Davr (period) boshqaruvi ────────────────────────────────────────────
 
 
-def _next_period_end(start: datetime) -> datetime:
+def _next_period_end(start: datetime, anchor_day: Optional[int] = None) -> datetime:
     """
     Boshlanish sanasiga +1 kalendar oy (oddiy 30 kun emas).
 
-    Kun raqami saqlanadi, lekin oy qisqa bo'lsa oyning oxirgi kuniga
-    qisqartiriladi (31-yanvar → 28-fevral, kabisa yilida 29-fevral).
+    `anchor_day` — obuna boshlangan ASL kun (1..31). Oy qisqa bo'lsa sana
+    o'sha oyning oxirgi kuniga qisqartiriladi, lekin LANGAR o'zgarmaydi:
+    31-yanvar → 28-fevral → 31-mart.
 
-    Cheklov: 31-kunda boshlangan obunada sana bir marta 28/30 ga surilib,
-    keyingi davrlar o'sha kundan davom etadi. Bu bilim bilan qabul
-    qilingan murosa — muqobili obunada alohida "anchor day" ustunini
-    saqlash bo'lardi. Hisob-kitobga ta'siri yo'q (davr uzunligi baribir
-    bir oy), faqat oylik sana bir-ikki kunga siljiydi.
+    `anchor_day=None` bo'lsa eski xatti-harakat (kun `start` dan olinadi) —
+    004 migratsiyasidan oldingi qatorlar uchun.
+
+    Args:
+        start:      Davr boshlanishi.
+        anchor_day: Langar kun (None = `start.day`).
     """
     year = start.year + (1 if start.month == 12 else 0)
     month = 1 if start.month == 12 else start.month + 1
-    day = min(start.day, calendar.monthrange(year, month)[1])
+    wanted = anchor_day or start.day
+    day = min(wanted, calendar.monthrange(year, month)[1])
     return start.replace(year=year, month=month, day=day)
 
 
@@ -113,13 +116,15 @@ def ensure_period(sub: Subscription, *, now: Optional[datetime] = None) -> bool:
     if sub.period_end > now:
         return False
 
+    anchor = sub.anchor_day or sub.period_start.day
+
     # Bir necha oy o'tib ketgan bo'lsa ham joriy oyga yetib olamiz.
     new_start = sub.period_end
-    new_end = _next_period_end(new_start)
+    new_end = _next_period_end(new_start, anchor)
     guard = 0
     while new_end <= now and guard < 120:
         new_start = new_end
-        new_end = _next_period_end(new_start)
+        new_end = _next_period_end(new_start, anchor)
         guard += 1
 
     sub.period_start = new_start
@@ -225,7 +230,8 @@ async def ensure_subscription(db: AsyncSession, user_id: int) -> Subscription:
         starts_at=now,
         ends_at=(now + timedelta(days=settings.trial_days)) if trial else None,
         period_start=now,
-        period_end=_next_period_end(now),
+        period_end=_next_period_end(now, now.day),
+        anchor_day=now.day,
         scans_used=0,
         bonus_credits=0,
     )
@@ -412,7 +418,8 @@ async def assign_plan(
         starts_at=now,
         ends_at=(now + timedelta(days=duration_days)) if duration_days else None,
         period_start=now,
-        period_end=_next_period_end(now),
+        period_end=_next_period_end(now, now.day),
+        anchor_day=now.day,
         # Yangi tarif = yangi davr: sarf nolga tushadi. Eskisini ko'chirish
         # ustozni yangi tarifda ham darrov limitga urib qo'yardi.
         scans_used=0,

@@ -32,14 +32,10 @@ PROGRESS_BATCH = 25
 
 
 def _get_sync_session():
-    """Celery task uchun sync SQLAlchemy session (tasks.py bilan bir xil uslub)."""
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import sessionmaker
+    """Celery task uchun sync SQLAlchemy session (umumiy engine — T-18)."""
+    from app.worker.session import get_sync_session
 
-    from app.core.config import get_settings
-
-    engine = create_engine(get_settings().sync_database_url, pool_pre_ping=True)
-    return sessionmaker(bind=engine)()
+    return get_sync_session()
 
 
 def _send_batch_sync(items: list[tuple[int, int]], text: str, parse_mode: str) -> dict[int, tuple[str, str]]:

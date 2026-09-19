@@ -40,6 +40,35 @@ export function clearAuth(): void {
   localStorage.removeItem(STORAGE_KEY)
 }
 
+/**
+ * Serverda sessiyani bekor qiladi (access + refresh tokenlar).
+ *
+ * Faqat localStorage'ni tozalash yetarli emas edi: token 14 kun davomida
+ * amal qilishda davom etardi (weaknesses.md №19). Xato bo'lsa ham lokal
+ * tozalash baribir bajariladi — chiqish hech qachon "ishlamay" qolmasin.
+ */
+export async function logoutRequest(): Promise<void> {
+  const auth = loadAuth()
+  if (!auth?.accessToken && !auth?.refreshToken) return
+
+  try {
+    // Toza axios: interceptor 401'da refresh urinishi shart emas.
+    await axios.post(
+      `${import.meta.env.VITE_API_BASE_URL || ''}/api/admin/auth/logout`,
+      { refresh_token: auth.refreshToken ?? null },
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          ...(auth.accessToken ? { Authorization: `Bearer ${auth.accessToken}` } : {}),
+        },
+        timeout: 5_000,
+      },
+    )
+  } catch {
+    // Tarmoq yo'q bo'lsa ham lokal chiqish davom etadi.
+  }
+}
+
 /** Sessiya tugaganda AuthProvider shu hodisaga obuna bo'lib login'ga yuboradi. */
 export const AUTH_EXPIRED_EVENT = 'omr-admin:auth-expired'
 

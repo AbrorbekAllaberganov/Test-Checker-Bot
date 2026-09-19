@@ -21,7 +21,9 @@ DDL:
         bubble_data     JSONB,          -- {"1": {"ratios": {...}, "conf": .., "flag": ..}}
         manual_override BOOLEAN NOT NULL DEFAULT false,
         reviewed_by_id  BIGINT REFERENCES users(id) ON DELETE SET NULL,
-        reviewed_at     TIMESTAMPTZ
+        reviewed_at     TIMESTAMPTZ,
+        -- 004: skanni kim yubordi (QR o'qilmagan skanlar ham egali bo'lsin)
+        submitted_by_id BIGINT REFERENCES users(id) ON DELETE SET NULL
     );
     CREATE INDEX idx_attempts_titul   ON attempts(titul_id);
     CREATE INDEX idx_attempts_created ON attempts(created_at);
@@ -56,6 +58,7 @@ class Attempt(Base):
         # Admin panel: status/review bo'yicha filtr + sana bo'yicha tartib.
         Index("idx_attempts_status_created", "status", "created_at"),
         Index("idx_attempts_needs_review", "needs_review", "created_at"),
+        Index("idx_attempts_submitted_by", "submitted_by_id"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
@@ -96,10 +99,20 @@ class Attempt(Base):
         TIMESTAMP(timezone=True), nullable=True
     )
 
+    # ── Kim yubordi (004) ────────────────────────────────────────────────
+    # `titul_id` NULL bo'lgan (QR o'qilmagan) skanlar uchun YAGONA egalik
+    # belgisi. Busiz eng muammoli skanlar hech kimga ko'rinmasdi.
+    submitted_by_id: Mapped[Optional[int]] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
     # Relationships
     titul: Mapped["Titul"] = relationship("Titul", back_populates="attempts")  # type: ignore[name-defined]
     reviewed_by: Mapped[Optional["User"]] = relationship(  # type: ignore[name-defined]
         "User", foreign_keys=[reviewed_by_id]
+    )
+    submitted_by: Mapped[Optional["User"]] = relationship(  # type: ignore[name-defined]
+        "User", foreign_keys=[submitted_by_id]
     )
 
     def __repr__(self) -> str:

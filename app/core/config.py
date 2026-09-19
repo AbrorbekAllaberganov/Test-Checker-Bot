@@ -80,13 +80,44 @@ class Settings(BaseSettings):
     # Yangi obuna necha kun 'trial' bo'ladi (0 = darrov 'active').
     trial_days: int = 0
 
+    # ── Vaqt zonasi ───────────────────────────────────────────────────────
+    # Ilova ichida hamma narsa UTC; bu faqat "bugun" kabi KUN chegaralari va
+    # foydalanuvchiga ko'rsatiladigan vaqt uchun (weaknesses.md №28).
+    app_timezone: str = "Asia/Tashkent"
+
+    # ── API hujjatlari ────────────────────────────────────────────────────
+    # Prod'da yopiq: /docs butun ichki API sxemasini ochib beradi.
+    enable_api_docs: bool = False
+
+    # ── Proxy ─────────────────────────────────────────────────────────────
+    # Uvicorn `--forwarded-allow-ips` bilan bir xil bo'lishi kerak. Faqat shu
+    # IP'lardan kelgan X-Forwarded-For ga ishonamiz (audit/rate limit uchun).
+    trusted_proxy_ips: str = "127.0.0.1"
+
+    # ── initData (Telegram Mini App) ──────────────────────────────────────
+    # 0 = cheksiz (tutib olingan initData abadiy ishlaydi) — ishlatmang.
+    init_data_max_age_seconds: int = 86400        # Mini App sessiyasi
+    admin_init_data_max_age_seconds: int = 300    # admin: uzoq refresh beradi
+
     # ── File paths ────────────────────────────────────────────────────────
     pdf_output_dir: Path = Path("/data/pdfs")
     debug_output_dir: Path = Path("/data/debug")
     temp_dir: Path = Path("/tmp/omr_uploads")
+    # Baholangan skanlar ko'chiriladigan doimiy papka (review uchun kerak):
+    # `temp_dir` efemer, review esa oylab ochilishi mumkin.
+    uploads_dir: Path = Path("/data/uploads")
+    # `temp_dir` dagi yetim fayllar shu muddatdan keyin o'chiriladi.
+    temp_file_max_age_hours: int = 24
 
     # ── Limits ────────────────────────────────────────────────────────────
     max_image_mb: int = 20
+    # PDF skandan nechta sahifa tekshiriladi (titul bir varaqli).
+    omr_max_pages: int = 1
+    # "Alohida" rejimida bir yo'la yuboriladigan titullar chegarasi —
+    # Telegram flood limitlari (weaknesses.md №22).
+    titul_single_send_max: int = 20
+    # Telegram hujjat chegarasi 50 MB; zaxira bilan bo'laklaymiz.
+    telegram_zip_max_mb: int = 45
 
     # ── OMR parameters (env-tunable for calibration) ──────────────────────
     omr_debug: bool = False
@@ -98,7 +129,12 @@ class Settings(BaseSettings):
 
     def ensure_dirs(self) -> None:
         """Ishga tushirishda papkalarni yaratish."""
-        for d in (self.pdf_output_dir, self.debug_output_dir, self.temp_dir):
+        for d in (
+            self.pdf_output_dir,
+            self.debug_output_dir,
+            self.temp_dir,
+            self.uploads_dir,
+        ):
             d.mkdir(parents=True, exist_ok=True)
 
 

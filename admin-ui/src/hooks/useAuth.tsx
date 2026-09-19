@@ -14,6 +14,7 @@ import {
   api,
   clearAuth,
   loadAuth,
+  logoutRequest,
   saveAuth,
 } from '@/api/client'
 import type { AdminProfile, AdminRole, TokenPair } from '@/api/types'
@@ -50,6 +51,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient()
 
   const logout = useCallback(() => {
+    // Serverda ham bekor qilamiz — aks holda token 14 kun amal qilardi.
+    // Javobni kutmaymiz: UI darhol login sahifasiga o'tadi.
+    void logoutRequest()
     clearAuth()
     setProfile(null)
     queryClient.clear()
@@ -91,10 +95,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Axios interceptor refresh'ni uddalay olmasa shu hodisani yuboradi.
   useEffect(() => {
-    const handler = () => logout()
+    // Token allaqachon yaroqsiz — serverga logout yuborish keraksiz.
+    const handler = () => {
+      clearAuth()
+      setProfile(null)
+      queryClient.clear()
+    }
     window.addEventListener(AUTH_EXPIRED_EVENT, handler)
     return () => window.removeEventListener(AUTH_EXPIRED_EVENT, handler)
-  }, [logout])
+  }, [queryClient])
 
   const value = useMemo<AuthContextValue>(
     () => ({

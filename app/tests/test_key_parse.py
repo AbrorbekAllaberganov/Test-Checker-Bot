@@ -83,10 +83,14 @@ class TestParseKeyFormat2:
 
 
 class TestParseKeyVariants:
-    def test_5_options(self):
-        text = "ABCDE" * 10
-        key = parse_key(text, 50, options=list("ABCDE"))
-        assert len(key) == 50
+    def test_5_options_rejected(self):
+        # T-21: 5-variant (A-E) qo'llanmaydi — layout A-D uchun kalibrlangan.
+        with pytest.raises(ValueError, match="Qo'llanmaydigan"):
+            parse_key("ABCDE" * 10, 50, options=list("ABCDE"))
+
+    def test_letter_e_rejected(self):
+        with pytest.raises(ValueError):
+            parse_key("ABCE", 4)
 
     def test_90(self):
         text = "ABCD" * 22 + "AB"  # 90 ta

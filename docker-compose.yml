@@ -13,6 +13,9 @@ x-app-base: &app-base
     - pdf_data:/data/pdfs
     - debug_data:/data/debug
     - temp_uploads:/tmp/omr_uploads
+    # Baholangan skanlar (review uchun) shu yerga ko'chiriladi — `temp_uploads`
+    # kunlik tozalanadi, review esa oylab ochilishi mumkin.
+    - uploads_data:/data/uploads
   depends_on:
     postgres:
       condition: service_healthy
@@ -89,6 +92,9 @@ services:
     environment:
       - SERVICE_NAME=bot
     command: python -m app.bot.main
+    # Bot HTTP tinglamaydi — image'dagi /health tekshiruvi bu yerda mos emas.
+    healthcheck:
+      disable: true
 
   # ── Celery Worker ─────────────────────────────────────────
   worker:
@@ -100,6 +106,23 @@ services:
       --loglevel=info
       --concurrency=4
       -Q default
+    healthcheck:
+      disable: true
+
+  # ── Celery Beat (rejalashtirilgan vazifalar) ──────────────
+  # Hozircha faqat `cleanup_temp_files` (kuniga bir marta): yetim
+  # vaqtinchalik fayllar cheksiz to'planib qolmasin (weaknesses.md №30).
+  # Jadval `app/worker/celery_app.py: beat_schedule` da.
+  beat:
+    <<: *app-base
+    environment:
+      - SERVICE_NAME=beat
+    command: >
+      celery -A app.worker.celery_app beat
+      --loglevel=info
+      --schedule=/tmp/omr_uploads/celerybeat-schedule
+    healthcheck:
+      disable: true
 
   # ── Flower (Celery monitoring) — ixtiyoriy ────────────────
   flower:
@@ -107,6 +130,8 @@ services:
     command: >
       celery -A app.worker.celery_app flower
       --port=5555
+    healthcheck:
+      disable: true
     ports:
       - "127.0.0.1:5555:5555"
     profiles:
@@ -143,3 +168,4 @@ volumes:
   pdf_data:
   debug_data:
   temp_uploads:
+  uploads_data:

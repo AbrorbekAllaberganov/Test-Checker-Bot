@@ -42,6 +42,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    SmallInteger,
     Text,
     func,
     text,
@@ -102,6 +103,11 @@ class Subscription(Base):
         TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
     )
     period_end: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    # Davr "langari" (004): obuna boshlangan kalendar kun (1..31). Har oy
+    # `min(anchor_day, oydagi_kunlar)` olinadi — 31-yanvar → 28-fevral →
+    # 31-mart. Busiz sana har qisqa oyda oldinga siljib ketardi
+    # (weaknesses.md №18).
+    anchor_day: Mapped[Optional[int]] = mapped_column(SmallInteger, nullable=True)
 
     scans_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     bonus_credits: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

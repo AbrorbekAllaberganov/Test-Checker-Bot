@@ -15,8 +15,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.test import Test
 
-# Ruxsat etilgan javob harflari
-VALID_OPTIONS = set("ABCDE")
+# Ruxsat etilgan javob harflari.
+#
+# DIQQAT (weaknesses.md №12): faqat 4 variant (A-D) qo'llanadi. `omr/layout.py`
+# dagi grid A-D uchun kalibrlangan — PDF'da E doirasi chizilmaydi va OMR uni
+# o'qimaydi, ya'ni "E" javob har doim xato bo'lib qolardi. 5-variant qo'shilishi
+# layout kalibrlashini talab qiladi (tasks.md T-21 varianti B).
+VALID_OPTIONS = set("ABCD")
+DEFAULT_OPTIONS = "ABCD"
+
+# Bot va API qabul qiladigan variant sonlari.
+SUPPORTED_VCOUNTS = (4,)
 
 
 def parse_key(
@@ -32,7 +41,7 @@ def parse_key(
     Args:
         text:    Foydalanuvchi kiritgan matn.
         qcount:  Savol soni (tekshirish uchun).
-        options: Ruxsat etilgan harflar (None = A-E).
+        options: Ruxsat etilgan harflar (None = A-D).
 
     Returns:
         {str: str} — 1-based string kalitlar.
@@ -40,7 +49,15 @@ def parse_key(
     Raises:
         ValueError: Format noto'g'ri yoki uzunlik mos kelmasa.
     """
-    allowed = set(options or list("ABCDE"))
+    allowed = set(options or list(DEFAULT_OPTIONS))
+
+    unsupported = allowed - VALID_OPTIONS
+    if unsupported:
+        raise ValueError(
+            f"Qo'llanmaydigan javob harflari: {sorted(unsupported)}. "
+            f"Hozircha faqat {sorted(VALID_OPTIONS)} mumkin."
+        )
+
     result: dict[str, str] = {}
 
     text = text.strip()

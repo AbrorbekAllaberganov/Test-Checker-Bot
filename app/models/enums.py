@@ -105,3 +105,4 @@ class AuditAction(StrEnum):
     BROADCAST_SEND = "broadcast.send"
     BROADCAST_CANCEL = "broadcast.cancel"
     ADMIN_LOGIN = "admin.login"
+    ADMIN_LOGOUT = "admin.logout"

@@ -45,11 +45,25 @@ export function useScanColumns(): ColumnDef<ScanListItem, unknown>[] {
       {
         id: 'owner',
         header: 'Ustoz',
-        cell: ({ row }) => (
-          <span className="text-sm text-muted-foreground">
-            {row.original.owner_name ?? '—'}
-          </span>
-        ),
+        cell: ({ row }) => {
+          const scan = row.original
+          // QR o'qilmagan skanda test egasi noma'lum — kim yuborgani
+          // ko'rsatiladi (aks holda ustun bo'sh qolardi).
+          if (scan.owner_name) {
+            return (
+              <span className="text-sm text-muted-foreground">{scan.owner_name}</span>
+            )
+          }
+          if (scan.submitted_by_name) {
+            return (
+              <span className="text-sm text-muted-foreground">
+                {scan.submitted_by_name}
+                <span className="ml-1 text-xs opacity-70">(yuborgan)</span>
+              </span>
+            )
+          }
+          return <span className="text-sm text-muted-foreground">—</span>
+        },
       },
       {
         id: 'result',

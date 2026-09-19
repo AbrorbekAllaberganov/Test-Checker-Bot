@@ -36,15 +36,31 @@ def fill_ratio(
     Returns:
         0.0 - 1.0 orasidagi float: 0=bo'sh, 1=to'liq to'ldirilgan.
     """
-    mask = np.zeros_like(warped_bin)
+    # Niqob faqat doira atrofidagi ROI uchun yaratiladi. Ilgari har doira
+    # uchun butun kadr o'lchamida (1449x2134) massiv ajratilardi — 360 doira
+    # × 3 MB (weaknesses.md №33). Natija aynan bir xil.
     inner_r = max(1, int(r * 0.8))
-    cv2.circle(mask, (int(cx), int(cy)), inner_r, 255, -1)
+    cx, cy = int(cx), int(cy)
+
+    h, w = warped_bin.shape[:2]
+    x0 = max(0, cx - inner_r)
+    y0 = max(0, cy - inner_r)
+    x1 = min(w, cx + inner_r + 1)
+    y1 = min(h, cy + inner_r + 1)
+
+    if x1 <= x0 or y1 <= y0:
+        # Doira kadrdan tashqarida (noto'g'ri kalibrlash yoki warp)
+        return 0.0
+
+    roi = warped_bin[y0:y1, x0:x1]
+    mask = np.zeros(roi.shape, dtype=np.uint8)
+    cv2.circle(mask, (cx - x0, cy - y0), inner_r, 255, -1)
 
     area = cv2.countNonZero(mask)
     if area == 0:
         return 0.0
 
-    filled = cv2.countNonZero(cv2.bitwise_and(warped_bin, mask))
+    filled = cv2.countNonZero(cv2.bitwise_and(roi, mask))
     return filled / area
 
 

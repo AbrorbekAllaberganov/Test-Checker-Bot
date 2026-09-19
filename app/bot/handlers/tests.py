@@ -3,14 +3,14 @@ app/bot/handlers/tests.py — Test yaratish va boshqarish oqimi (faqat inline).
 """
 from __future__ import annotations
 
-import io
+import asyncio
 import logging
-import zipfile
 from pathlib import Path
 
 from aiogram import Bot, F, Router
+from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter
 from aiogram.fsm.context import FSMContext
-from aiogram.types import BufferedInputFile, CallbackQuery, FSInputFile, Message
+from aiogram.types import CallbackQuery, FSInputFile, Message
 
 from app.bot.keyboards.inline import (
     cancel_inline_kb,
@@ -26,12 +26,19 @@ from app.bot.keyboards.inline import (
     main_menu_inline_kb,
 )
 from app.bot.states import TestCreate
+from app.core.config import get_settings
 from app.core.db import get_session_factory
 from app.models.user import User
 from app.services.access import owned_group, owned_test
 from app.services.groups import get_groups_by_owner
 from app.services.telegram import escape
-from app.services.tests import create_test, get_tests_by_group, parse_key
+from app.services.tests import (
+    DEFAULT_OPTIONS,
+    SUPPORTED_VCOUNTS,
+    create_test,
+    get_tests_by_group,
+    parse_key,
+)
 from app.services.titul import generate_tituls_for_test, get_tituls_by_test
 
 log = logging.getLogger(__name__)
@@ -157,9 +164,18 @@ async def receive_qcount(call: CallbackQuery, state: FSMContext) -> None:
 @router.callback_query(F.data.startswith("vcount:"), TestCreate.choosing_vcount)
 async def receive_vcount(call: CallbackQuery, state: FSMContext) -> None:
     vcount = int(call.data.split(":")[1])
+    # Eski klaviaturadagi "5 (A-E)" tugmasi (yoki soxta callback) rad etiladi:
+    # layout A-D uchun kalibrlangan (weaknesses.md №12).
+    if vcount not in SUPPORTED_VCOUNTS:
+        await call.answer(
+            "Hozircha faqat 4 variantli (A-D) testlar qo'llanadi.",
+            show_alert=True,
+        )
+        return
+
     data = await state.get_data()
     qcount = data["qcount"]
-    options = "ABCDE"[:vcount]
+    options = DEFAULT_OPTIONS[:vcount]
     await state.update_data(vcount=vcount)
     await state.set_state(TestCreate.entering_key)
 
@@ -179,7 +195,7 @@ async def receive_answer_key(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     qcount: int = data["qcount"]
     vcount: int = data["vcount"]
-    options = list("ABCDE"[:vcount])
+    options = list(DEFAULT_OPTIONS[:vcount])
 
     try:
         key = parse_key(message.text, qcount, options)
@@ -284,7 +300,9 @@ async def gen_tituls_all(call: CallbackQuery, state: FSMContext, bot: Bot, db_us
         return
 
     log.info("Test (ID: %d) uchun titul generatsiya boshlandi.", test_id)
-    await call.message.edit_text("⏳ Titullar tayyorlanmoqda... Tayyor bo'lgach har biri yuboriladi.")
+    await call.message.edit_text(
+        "⏳ Titullar tayyorlanmoqda... Tayyor bo'lgach ZIP arxiv sifatida yuboriladi."
+    )
 
     owner_id = db_user.id
     factory = get_session_factory()
@@ -303,15 +321,16 @@ async def gen_tituls_all(call: CallbackQuery, state: FSMContext, bot: Bot, db_us
     chat_id = call.message.chat.id
     log.info("Titul yozuvlari yaratildi (soni: %d). Celery tasklar yuborilmoqda... (chat_id: %d)", len(titul_ids), chat_id)
 
-    # Har titul uchun Celery task
-    from app.worker.tasks import pdf_task
-    for tid in titul_ids:
-        pdf_task.delay(tid, chat_id)
+    # BITTA task: hammasini render qilib bitta ZIP qilib yuboradi.
+    # Ilgari har titul uchun alohida `pdf_task(tid, chat_id)` edi — 150
+    # o'quvchi = 150 ta xabar, Telegram flood limiti, ba'zilari indamay
+    # yo'qolardi (weaknesses.md №22).
+    from app.worker.tasks import tituls_batch_task
+    tituls_batch_task.delay(test_id, chat_id)
 
-    # ZIP yuklash yoki boshqa menyu
     await call.message.answer(
-        f"⏳ {len(titul_ids)} ta titul generatsiya qilinmoqda.\n"
-        "Yuklab olish formatini tanlang:",
+        f"⏳ {len(titul_ids)} ta titul tayyorlanmoqda — tayyor bo'lgach ZIP yuboriladi.\n"
+        "Keyinroq boshqa formatda ham yuklab olishingiz mumkin:",
         reply_markup=titul_format_kb(test_id),
     )
     await call.answer()
@@ -331,10 +350,20 @@ async def test_selected(call: CallbackQuery, db_user: User) -> None:
         await call.answer("Test topilmadi", show_alert=True)
         return
 
+    # Eski (T-21 dan oldin yaratilgan) 5 variantli testlar bazada qolgan —
+    # OMR ular uchun "E" doirasini o'qiy olmaydi, ustoz buni bilishi kerak.
+    warning = ""
+    if test.variant_count not in SUPPORTED_VCOUNTS:
+        warning = (
+            "\n⚠️ <b>Diqqat:</b> bu test 5 variantli (A-E). Tekshiruv faqat "
+            "A-D doiralarini o'qiydi — “E” javoblar xato hisoblanadi.\n"
+        )
+
     await call.message.edit_text(
         f"📝 <b>{escape(test.title)}</b>\n"
         f"Savollar soni: {test.question_count} ta\n"
-        f"Variantlar soni: {test.variant_count} ta\n\n"
+        f"Variantlar soni: {test.variant_count} ta\n"
+        f"{warning}\n"
         f"Nima qilmoqchisiz?",
         reply_markup=test_menu_kb(test_id),
         parse_mode="HTML",
@@ -383,17 +412,36 @@ async def send_tituls_single(call: CallbackQuery, bot: Bot, db_user: User) -> No
         await call.answer("Hali tayyor titul yo'q.", show_alert=True)
         return
 
+    # Telegram flood limiti (weaknesses.md №22): "alohida" rejimi faqat kichik
+    # guruhlar uchun. Kattasida ZIP — u bitta xabar.
+    limit = get_settings().titul_single_send_max
+    if len(ready) > limit:
+        await call.answer(
+            f"{len(ready)} ta titulni alohida yuborib bo'lmaydi "
+            f"(chegara {limit} ta). ZIP ni tanlang.",
+            show_alert=True,
+        )
+        return
+
     await call.message.answer(f"⏳ {len(ready)} ta titul yuborilmoqda...")
+    sent = 0
     for t in ready:
-        try:
-            fname = Path(t.pdf_path).name
-            await bot.send_document(
-                call.message.chat.id,
-                FSInputFile(t.pdf_path, filename=fname),
-                caption=f"📄 {escape(fname)}"
-            )
-        except Exception as e:
-            log.error("Titul yuborishda xato (%s): %s", t.pdf_path, e)
+        fname = Path(t.pdf_path).name
+        ok = await _send_document_safe(
+            bot,
+            call.message.chat.id,
+            FSInputFile(t.pdf_path, filename=fname),
+            caption=f"📄 {escape(fname)}",
+        )
+        if ok:
+            sent += 1
+        # Ketma-ket yuborishda Telegram ~30 msg/s ga ruxsat beradi.
+        await asyncio.sleep(0.05)
+
+    if sent < len(ready):
+        await call.message.answer(
+            f"⚠️ {len(ready) - sent} ta titul yuborilmadi. ZIP orqali urinib ko'ring."
+        )
     await call.answer()
 
 
@@ -403,25 +451,40 @@ async def send_tituls_zip(call: CallbackQuery, bot: Bot, db_user: User) -> None:
     owner_id = db_user.id
     factory = get_session_factory()
     async with factory() as db:
-        tituls = await get_tituls_by_test(db, test_id, owner_id=owner_id)
+        if await owned_test(db, test_id, owner_id) is None:
+            await call.answer("Test topilmadi.", show_alert=True)
+            return
 
-    ready = [t for t in tituls if t.pdf_path and Path(t.pdf_path).exists()]
-    if not ready:
-        await call.answer("Hali tayyor titul yo'q.", show_alert=True)
-        return
+    # ZIP endi worker'da, DISKDA yig'iladi va kerak bo'lsa bo'laklarga
+    # bo'linadi — ilgari butun arxiv bot jarayonining xotirasida edi va
+    # 50 MB dan oshsa Telegram indamay rad etardi (weaknesses.md №22).
+    from app.worker.tasks import tituls_batch_task
+    tituls_batch_task.delay(test_id, call.message.chat.id)
 
-    await call.message.answer("⏳ ZIP tayyorlanmoqda...")
-
-    zip_buf = io.BytesIO()
-    with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for t in ready:
-            fname = Path(t.pdf_path).name
-            zf.write(t.pdf_path, fname)
-
-    zip_buf.seek(0)
-    await bot.send_document(
-        call.message.chat.id,
-        BufferedInputFile(zip_buf.read(), filename=f"titullar_test{test_id}.zip"),
-        caption=f"📦 {len(ready)} ta titul",
-    )
+    await call.message.answer("⏳ ZIP tayyorlanmoqda, tayyor bo'lgach yuboriladi...")
     await call.answer()
+
+
+async def _send_document_safe(bot: Bot, chat_id: int, document, caption: str) -> bool:
+    """
+    Hujjat yuboradi; `RetryAfter` kelsa aytilgan vaqt kutib bir marta qaytaradi.
+
+    Ilgari 429 faqat log qilinardi va titul indamay yetib bormasdi.
+    """
+    for attempt in range(2):
+        try:
+            await bot.send_document(chat_id, document, caption=caption)
+            return True
+        except TelegramRetryAfter as exc:
+            if attempt == 0:
+                await asyncio.sleep(exc.retry_after + 1)
+                continue
+            log.error("Titul yuborilmadi (flood limiti): chat_id=%d", chat_id)
+            return False
+        except TelegramForbiddenError:
+            log.warning("Bot bloklangan: chat_id=%d", chat_id)
+            return False
+        except Exception as e:
+            log.error("Titul yuborishda xato: %s", e)
+            return False
+    return False

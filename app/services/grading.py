@@ -91,6 +91,55 @@ def grade(
     )
 
 
+class AnswerValidationError(ValueError):
+    """Qo'lda tuzatishda noto'g'ri javob yoki savol raqami."""
+
+
+def validate_answers(
+    answers: dict[str, Optional[str]],
+    question_count: int,
+    variant_count: int,
+    answer_key: Optional[dict[str, str]] = None,
+) -> None:
+    """
+    Qo'lda tuzatilgan javoblarni tekshiradi (admin va Mini App uchun bitta joy).
+
+    Ilgari admin panelida validatsiya bor, Mini App'da yo'q edi — ustoz
+    "Z" yoki 999-savol yuborsa `detail` buzilardi (weaknesses.md №24).
+
+    Args:
+        answers:        {"1": "A", "7": None, ...} — faqat o'zgarganlar bo'lishi mumkin.
+        question_count: Testdagi savollar soni.
+        variant_count:  Variantlar soni (harflar A..).
+        answer_key:     Berilsa, savol raqami aynan kalitda borligi tekshiriladi.
+
+    Raises:
+        AnswerValidationError: mos kelmasa.
+    """
+    letters = set("ABCDE"[:variant_count])
+
+    for q, value in answers.items():
+        if not str(q).isdigit():
+            raise AnswerValidationError(f"Savol raqami noto'g'ri: {q!r}")
+
+        qno = int(q)
+        if answer_key is not None:
+            if str(qno) not in answer_key:
+                raise AnswerValidationError(f"{qno}-savol bu testda mavjud emas")
+        elif not (1 <= qno <= question_count):
+            raise AnswerValidationError(
+                f"{qno}-savol bu testda mavjud emas (1..{question_count})"
+            )
+
+        if value is None:
+            continue
+        if value not in letters:
+            raise AnswerValidationError(
+                f"{qno}-savol uchun '{value}' javobi noto'g'ri. "
+                f"Ruxsat etilgan: {', '.join(sorted(letters))} yoki bo'sh"
+            )
+
+
 def format_result_message(
     grade_result: GradeResult,
     test_title: str,

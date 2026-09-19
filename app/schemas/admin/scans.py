@@ -35,6 +35,10 @@ class ScanListItem(BaseModel):
     group_name: Optional[str] = None
     owner_id: Optional[int] = None
     owner_name: Optional[str] = None
+    # Skanni kim yubordi (004). QR o'qilmagan skanda `owner_*` NULL bo'ladi —
+    # bu yagona manba.
+    submitted_by_id: Optional[int] = None
+    submitted_by_name: Optional[str] = None
 
 
 class BubbleCell(BaseModel):

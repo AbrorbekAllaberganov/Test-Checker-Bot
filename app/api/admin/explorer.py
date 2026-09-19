@@ -30,6 +30,7 @@ from app.models.student import Student
 from app.models.test import Test
 from app.models.titul import Titul
 from app.models.user import User
+from app.services.search import LIKE_ESCAPE, like_pattern
 from app.schemas.admin.common import Page
 from app.schemas.admin.explorer import (
     GroupDetail,
@@ -88,7 +89,7 @@ async def list_groups(
         if owner_id is not None:
             stmt = stmt.where(Group.owner_id == owner_id)
         if search:
-            stmt = stmt.where(Group.name.ilike(f"%{search.strip()}%"))
+            stmt = stmt.where(Group.name.ilike(like_pattern(search), escape=LIKE_ESCAPE))
         return stmt
 
     total = (await db.execute(apply(select(func.count(Group.id))))).scalar() or 0
@@ -287,7 +288,7 @@ async def list_students(
         if owner_id is not None:
             stmt = stmt.where(Group.owner_id == owner_id)
         if search:
-            stmt = stmt.where(Student.full_name.ilike(f"%{search.strip()}%"))
+            stmt = stmt.where(Student.full_name.ilike(like_pattern(search), escape=LIKE_ESCAPE))
         return stmt
 
     total = (
@@ -470,7 +471,7 @@ async def list_tests(
         if question_count is not None:
             stmt = stmt.where(Test.question_count == question_count)
         if search:
-            stmt = stmt.where(Test.title.ilike(f"%{search.strip()}%"))
+            stmt = stmt.where(Test.title.ilike(like_pattern(search), escape=LIKE_ESCAPE))
         return stmt
 
     total = (

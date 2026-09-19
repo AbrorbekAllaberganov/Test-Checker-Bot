@@ -16,6 +16,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.time import to_local
 from app.models.attempt import Attempt
 from app.models.student import Student
 from app.models.test import Test
@@ -176,7 +177,7 @@ def results_to_csv(results: list[TestResultItem], test_title: str) -> bytes:
             r.total,
             r.percent,
             "Ha" if r.needs_review else "",
-            r.created_at.strftime("%d.%m.%Y %H:%M") if r.created_at else "",
+            to_local(r.created_at).strftime("%d.%m.%Y %H:%M") if r.created_at else "",
         ])
 
     return buf.getvalue().encode("utf-8-sig")  # Excel uchun BOM

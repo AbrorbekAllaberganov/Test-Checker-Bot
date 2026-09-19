@@ -43,6 +43,17 @@ class RefreshIn(BaseModel):
     refresh_token: str = Field(min_length=10)
 
 
+class LogoutIn(BaseModel):
+    """Chiqish: refresh token bekor qilinadi (access token header'dan olinadi)."""
+
+    refresh_token: Optional[str] = Field(default=None, min_length=10)
+
+
+class LogoutOut(BaseModel):
+    ok: bool = True
+    message: str = "Sessiya yakunlandi."
+
+
 class AdminProfile(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

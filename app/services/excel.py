@@ -14,6 +14,7 @@ from openpyxl.utils import get_column_letter
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.time import to_local
 from app.models.attempt import Attempt
 from app.models.student import Student
 from app.models.test import Test
@@ -88,7 +89,7 @@ def _style_sheet(ws) -> None:
                     cell.number_format = '0.0"%"'
             elif isinstance(val, datetime):
                 cell.alignment = center_align
-                cell.value = val.strftime("%d.%m.%Y %H:%M")
+                cell.value = to_local(val).strftime("%d.%m.%Y %H:%M")
             else:
                 # Text ustuni
                 if str(val) in ["Ha", "Yo'q"]:
@@ -109,7 +110,7 @@ def _style_sheet(ws) -> None:
             val = cell.value
             if val is not None:
                 if isinstance(val, datetime):
-                    val_str = val.strftime("%d.%m.%Y %H:%M")
+                    val_str = to_local(val).strftime("%d.%m.%Y %H:%M")
                 elif isinstance(val, float):
                     val_str = f"{val:.1f}%"
                 else:
